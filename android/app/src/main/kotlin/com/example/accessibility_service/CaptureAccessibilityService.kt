@@ -2,9 +2,13 @@ package com.example.accessibility_service
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
+import android.graphics.Bitmap
+import android.os.Build
 import android.util.Log
+import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.annotation.RequiresApi
 import com.example.accessibility_service.Util.ScreenSummary
 import com.example.accessibility_service.Util.CaptureNode
 import com.example.accessibility_service.Util.NetworkSyncManager
@@ -63,7 +67,9 @@ class CaptureAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
+    @RequiresApi(Build.VERSION_CODES.R)
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        Log.d(TAG, "Event")
         if (event == null) return
 
         val packageName = event.packageName?.toString() ?: return
@@ -88,6 +94,25 @@ class CaptureAccessibilityService : AccessibilityService() {
             eventType = eventName(event.eventType),
             screenSummary = screenSummary,
         )
+
+        takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object: TakeScreenshotCallback {
+            override fun onFailure(p0: Int) {
+                Log.e(TAG, "Error taking screenshot $p0")
+            }
+
+            override fun onSuccess(p0: ScreenshotResult) {
+                Log.d(TAG, "success screenshot woo $p0")
+
+                val hwbuffer = p0.hardwareBuffer
+                val bitmap = Bitmap.wrapHardwareBuffer(hwbuffer, p0.colorSpace)
+                val bingus = bitmap!!.copy(Bitmap.Config.ARGB_8888, false)
+
+                hwbuffer.close();
+
+            }
+
+        })
+
     }
 
     override fun onInterrupt() {
