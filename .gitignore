@@ -9,7 +9,7 @@
 !server/**
 
 server/__pycache__/
-
+server/captures.jsonl
 # ============================================================
 # ALLOW: Android project structure
 # ============================================================
