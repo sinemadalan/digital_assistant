@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Accessibility Service Prototype</string>
+    <string name="accessibility_service_label">Dijital Asistan Capture Service</string>
+    <string name="accessibility_service_description">Instagram, WhatsApp ve Facebook ekranlarindaki erisilebilir icerigi test amacli yakalar.</string>
+</resources>

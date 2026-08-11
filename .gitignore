@@ -1,0 +1,75 @@
+# ============================================================
+# DENY EVERYTHING
+# ============================================================
+*
+
+!lib/
+!server/
+!lib/**
+!server/**
+
+server/__pycache__/
+
+# ============================================================
+# ALLOW: Android project structure
+# ============================================================
+
+!android/
+!android/app/
+!android/app/src/
+!android/app/src/main/
+!android/app/src/main/kotlin/
+!android/app/src/main/kotlin/com/
+!android/app/src/main/kotlin/com/example/
+!android/app/src/main/kotlin/com/example/accessibility_service/
+
+# Allow everything inside this source directory
+!android/app/src/main/kotlin/com/example/accessibility_service/**
+
+
+# ============================================================
+# ALLOW: Gradle configuration
+# ============================================================
+
+!android/build.gradle
+!android/settings.gradle
+!android/gradle.properties
+!android/gradle/
+!android/gradle/wrapper/
+!android/gradle/wrapper/**
+
+# If using Kotlin DSL:
+!android/build.gradle.kts
+!android/settings.gradle.kts
+
+
+# ============================================================
+# ALLOW: App-level Gradle configuration
+# ============================================================
+
+!android/app/build.gradle
+!android/app/build.gradle.kts
+
+
+# ============================================================
+# ALLOW: Android resources
+# ============================================================
+
+!android/app/src/main/res/
+!android/app/src/main/res/**
+
+
+# ============================================================
+# ALLOW: AndroidManifest
+# ============================================================
+
+!android/app/src/main/AndroidManifest.xml
+
+
+# ============================================================
+# ALLOW: Root project files
+# ============================================================
+
+!.gitignore
+!README.md
+!LICENSE
