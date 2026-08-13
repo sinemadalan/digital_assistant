@@ -1,10 +1,12 @@
 from datetime import datetime, timezone
+from collections import deque
+import os
 import json
 from pathlib import Path
 from typing import Any
 import uvicorn
-
-from fastapi import FastAPI
+import time
+from fastapi import FastAPI, Header, Request, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -62,11 +64,33 @@ class CapturePayload(BaseModel):
     @classmethod
     def keep_informative_nodes(cls, value: list[CaptureNode]) -> list[CaptureNode]:
         informative_nodes = [
-            node
-            for node in value
-            if node.text or node.content_description
+            node for node in value if node.text or node.content_description
         ]
         return informative_nodes[:MAX_NODE_COUNT]
+
+
+# For development only. Used to view Screenshots from device
+class FileManager:
+    def __init__(self, max_files=100):
+        self.max_files = max_files
+        self.file_queue = deque()
+        self.save_directory = "saved_screenshots"
+
+        # Create the directory if it doesn't exist
+        os.makedirs(self.save_directory, exist_ok=True)
+
+    def add_file(self, filepath: str):
+        # Add the newest file to the right side of the queue
+        self.file_queue.append(filepath)
+
+        # If we have more than 100 files, remove the oldest one from the left
+        while len(self.file_queue) > self.max_files:
+            oldest_file = self.file_queue.popleft()
+
+            # Explicitly delete the file from the hard drive
+            if os.path.exists(oldest_file):
+                os.remove(oldest_file)
+                print(f"Deleted old file: {oldest_file}")
 
 
 @app.get("/health")
@@ -75,6 +99,43 @@ def health_check() -> dict[str, str]:
         "status": "ok",
         "service": "accessibility-capture-server",
     }
+
+
+# For development only. Used to view Screenshots from device
+# Initialize our manager instance
+file_manager = FileManager(max_files=100)
+
+
+@app.post("/image_capture")
+async def capture_image(request: Request, x_user_id: str = Header(default=None)):
+    """
+    FastAPI automatically looks for an HTTP header named 'X-User-Id'
+    and maps it to the 'x_user_id' parameter.
+    """
+
+    # 1. Ensure the user ID was provided
+    if not x_user_id:
+        raise HTTPException(status_code=400, detail="X-User-Id header is missing")
+
+    # 2. Read the raw image bytes from the request body
+    image_bytes = await request.body()
+    print("AOIDGSNDSOI " + str(image_bytes))
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="No image payload received")
+
+    # 3. Create a unique filename using the User ID and the current timestamp
+    filename = f"screenshot_{x_user_id}_{int(time.time())}.jpeg"
+    filepath = os.path.join(file_manager.save_directory, filename)
+
+    # 4. Save the raw bytes directly to a PNG file on disk
+    with open(filepath, "wb") as file:
+        file.write(image_bytes)
+
+    # 5. Add the file path to our queue manager (which handles the 100-file limit)
+    file_manager.add_file(filepath)
+
+    # Return a JSON success response to the Android client
+    return {"status": "success", "user": x_user_id, "saved_as": filename}
 
 
 @app.post("/capture")
@@ -134,14 +195,8 @@ def generate_summary(app_name: str, package_name: str) -> dict[str, Any]:
         }
 
     latest_capture = captures[-1]
-    screen_text_counts = [
-        len(capture.get("screenText", []))
-        for capture in captures
-    ]
-    node_counts = [
-        len(capture.get("nodes", []))
-        for capture in captures
-    ]
+    screen_text_counts = [len(capture.get("screenText", [])) for capture in captures]
+    node_counts = [len(capture.get("nodes", [])) for capture in captures]
 
     return {
         "appName": app_name,
@@ -149,7 +204,9 @@ def generate_summary(app_name: str, package_name: str) -> dict[str, Any]:
         "captureCount": len(captures),
         "latestCapturedAtDevice": latest_capture.get("capturedAtDevice"),
         "latestReceivedAtServer": latest_capture.get("receivedAtServer"),
-        "averageScreenTextCount": round(sum(screen_text_counts) / len(screen_text_counts), 2),
+        "averageScreenTextCount": round(
+            sum(screen_text_counts) / len(screen_text_counts), 2
+        ),
         "averageNodeCount": round(sum(node_counts) / len(node_counts), 2),
         "latestScreenText": latest_capture.get("screenText", [])[:20],
         "latestNodeSamples": latest_capture.get("nodes", [])[:10],

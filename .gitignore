@@ -3,13 +3,18 @@
 # ============================================================
 *
 
+#Dart flutter stuff
 !lib/
-!server/
 !lib/**
+
+#Server code
+!server/
 !server/**
 
 server/__pycache__/
 server/captures.jsonl
+server/saved_screenshots
+
 # ============================================================
 # ALLOW: Android project structure
 # ============================================================

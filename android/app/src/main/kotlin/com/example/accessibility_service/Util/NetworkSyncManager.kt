@@ -1,19 +1,25 @@
 package com.example.accessibility_service.Util
-import android.os.Build
+import android.accessibilityservice.AccessibilityService.ScreenshotResult
 import android.util.Log
-import androidx.annotation.RequiresApi
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 import java.time.OffsetDateTime
+import android.graphics.Bitmap
+import android.os.Build
+import androidx.annotation.RequiresApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.net.ConnectException
 
 
 private const val TAG = "CaptureA11yService"
 private const val HTTP_TIMEOUT_MS = 3_000
 
-class NetworkSyncManager(val endpoint: String){
+class NetworkSyncManager(val IP: String){
 
     fun CaptureNode.toJson(): JSONObject {
         return JSONObject()
@@ -42,7 +48,7 @@ class NetworkSyncManager(val endpoint: String){
 
         Thread {
             try {
-                val connection = URL(endpoint).openConnection() as HttpURLConnection
+                val connection = URL("$IP/capture").openConnection() as HttpURLConnection
                 connection.requestMethod = "POST"
                 connection.connectTimeout = HTTP_TIMEOUT_MS
                 connection.readTimeout = HTTP_TIMEOUT_MS
@@ -60,6 +66,36 @@ class NetworkSyncManager(val endpoint: String){
                 Log.e(TAG, "Capture POST failed: ${error.message}", error)
             }
         }.start()
+    }
+
+    @RequiresApi(Build.VERSION_CODES.R)
+    suspend fun sendScreenshot(imageBytes: ByteArray, userId: String) {
+        withContext(Dispatchers.IO) {
+            try {
+                Log.d(TAG, "Sending data")
+                val url = URL("$IP/image_capture")
+                Log.d(TAG, url.toString())
+                val conn = url.openConnection() as HttpURLConnection
+                conn.connectTimeout = HTTP_TIMEOUT_MS
+                conn.readTimeout = HTTP_TIMEOUT_MS
+                conn.setDoOutput(true)
+                conn.setRequestMethod("POST")
+                // 1. Set the content type to raw image
+                conn.setRequestProperty("Content-Type", "image/png")
+                // 2. Pass your metadata via Custom Headers (usually prefixed with X-)
+                conn.setRequestProperty("X-User-Id", userId)
+                conn.getOutputStream().use { os ->
+                    os.write(imageBytes)
+                    os.flush()
+                }
+                val code = conn.responseCode
+                Log.d(TAG, "Success send ss $code")
+            }
+            catch (e: ConnectException){
+                Log.d(TAG, "network send ss Error ${e.message}")
+                return@withContext
+            }
+        }
     }
 
 }
