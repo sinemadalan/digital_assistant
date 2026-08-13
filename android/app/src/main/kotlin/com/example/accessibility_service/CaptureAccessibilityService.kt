@@ -16,6 +16,7 @@ import com.example.accessibility_service.Util.NodeWalker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -34,10 +35,11 @@ object AccessibilityState {
     }
 }
 class CaptureAccessibilityService : AccessibilityService() {
+
+    private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     companion object {
         private val network_man = NetworkSyncManager("http://192.168.1.57:8000")
         private val nodewalker = NodeWalker();
-        private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
         private const val TAG = "CaptureA11yService"
         private const val THROTTLE_MS = 2_000L
         private val lastCaptureTimeByPackage = mutableMapOf<String, Long>()
@@ -68,6 +70,7 @@ class CaptureAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         // Catch-all for when the service is destroyed
         AccessibilityState.setRunning(false)
+        serviceScope.cancel()
         super.onDestroy()
     }
 
@@ -117,6 +120,8 @@ class CaptureAccessibilityService : AccessibilityService() {
                     bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 100, bos)
                     val imageBytes: kotlin.ByteArray = bos.toByteArray()
 
+                    screenshotResult.hardwareBuffer.close()
+                    bitmap.recycle()
                     network_man.sendScreenshot(imageBytes, "user_0");
                 }
             }
