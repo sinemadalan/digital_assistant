@@ -7,12 +7,10 @@ import android.os.Build
 import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityNodeInfo
 import androidx.annotation.RequiresApi
-import com.example.accessibility_service.Util.ScreenSummary
-import com.example.accessibility_service.Util.CaptureNode
 import com.example.accessibility_service.Util.NetworkSyncManager
 import com.example.accessibility_service.Util.NodeWalker
+import com.example.accessibility_service.Util.ScreenSummary
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -104,6 +102,17 @@ class CaptureAccessibilityService : AccessibilityService() {
 
         takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object: TakeScreenshotCallback {
             override fun onFailure(p0: Int) {
+                try {
+                    //adb shell settings put global hidden_api_policy 1
+                    //adb shell settings delete global hidden_api_policy
+                    val field = AccessibilityService::class.java.getDeclaredField("ACCESSIBILITY_TAKE_SCREENSHOT_REQUEST_INTERVAL_TIMES_MS")
+                    field.setAccessible(true); // Bypass visibility modifiers
+                    val intervalMs = field.getInt(null) // It is a static primitive int
+                    Log.d("ScreenshotInterval", "The exact system interval is: $intervalMs ms")
+
+                } catch (e: Exception) {
+                    Log.e("ScreenshotInterval", "Failed to read interval via reflection", e)
+                }
                 Log.e(TAG, "Error taking screenshot $p0")
             }
 
