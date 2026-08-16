@@ -6,6 +6,7 @@
 #Dart flutter stuff
 !lib/
 !lib/**
+!pubspec.yaml
 
 #Server code
 !server/
@@ -45,6 +46,7 @@ server/saved_screenshots
 
 # If using Kotlin DSL:
 !android/build.gradle.kts
+!android/app/build.gradle.kts
 !android/settings.gradle.kts
 
 
