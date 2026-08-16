@@ -12,8 +12,6 @@ import android.os.Build
 import androidx.annotation.RequiresApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
-import java.net.ConnectException
 
 
 private const val TAG = "CaptureA11yService"
@@ -71,29 +69,31 @@ class NetworkSyncManager(val IP: String){
     @RequiresApi(Build.VERSION_CODES.R)
     suspend fun sendScreenshot(imageBytes: ByteArray, userId: String) {
         withContext(Dispatchers.IO) {
+            var conn: HttpURLConnection? = null
             try {
                 Log.d(TAG, "Sending data")
                 val url = URL("$IP/image_capture")
                 Log.d(TAG, url.toString())
-                val conn = url.openConnection() as HttpURLConnection
-                conn.connectTimeout = HTTP_TIMEOUT_MS
-                conn.readTimeout = HTTP_TIMEOUT_MS
-                conn.setDoOutput(true)
-                conn.setRequestMethod("POST")
-                // 1. Set the content type to raw image
-                conn.setRequestProperty("Content-Type", "image/png")
+                val connection = url.openConnection() as HttpURLConnection
+                conn = connection
+                connection.connectTimeout = HTTP_TIMEOUT_MS
+                connection.readTimeout = HTTP_TIMEOUT_MS
+                connection.setDoOutput(true)
+                connection.setRequestMethod("POST")
+                connection.setRequestProperty("Content-Type", "image/jpeg")
                 // 2. Pass your metadata via Custom Headers (usually prefixed with X-)
-                conn.setRequestProperty("X-User-Id", userId)
-                conn.getOutputStream().use { os ->
+                connection.setRequestProperty("X-User-Id", userId)
+                connection.getOutputStream().use { os ->
                     os.write(imageBytes)
                     os.flush()
                 }
-                val code = conn.responseCode
+                val code = connection.responseCode
                 Log.d(TAG, "Success send ss $code")
             }
-            catch (e: ConnectException){
-                Log.d(TAG, "network send ss Error ${e.message}")
-                return@withContext
+            catch (error: Exception){
+                Log.e(TAG, "Screenshot POST failed: ${error.message}", error)
+            } finally {
+                conn?.disconnect()
             }
         }
     }

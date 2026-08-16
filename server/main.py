@@ -119,15 +119,15 @@ async def capture_image(request: Request, x_user_id: str = Header(default=None))
 
     # 2. Read the raw image bytes from the request body
     image_bytes = await request.body()
-    print("AOIDGSNDSOI " + str(image_bytes))
     if not image_bytes:
         raise HTTPException(status_code=400, detail="No image payload received")
+    print(f"Received screenshot: {len(image_bytes)} bytes")
 
     # 3. Create a unique filename using the User ID and the current timestamp
     filename = f"screenshot_{x_user_id}_{int(time.time())}.jpeg"
     filepath = os.path.join(file_manager.save_directory, filename)
 
-    # 4. Save the raw bytes directly to a PNG file on disk
+    # 4. Save the JPEG bytes directly to disk
     with open(filepath, "wb") as file:
         file.write(image_bytes)
 

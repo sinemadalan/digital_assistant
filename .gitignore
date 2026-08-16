@@ -1,82 +1,93 @@
 # ============================================================
-# DENY EVERYTHING
+# DEFAULT: DENY EVERYTHING
+# Only explicitly allowed source and configuration files are tracked.
 # ============================================================
 *
 
-#Dart flutter stuff
-!lib/
-!lib/**
-!pubspec.yaml
-
-#Server code
-!server/
-!server/**
-
-server/__pycache__/
-server/captures.jsonl
-server/saved_screenshots
 
 # ============================================================
-# ALLOW: Android project structure
+# ROOT PROJECT FILES
 # ============================================================
-
-!android/
-!android/app/
-!android/app/src/
-!android/app/src/main/
-!android/app/src/main/kotlin/
-!android/app/src/main/kotlin/com/
-!android/app/src/main/kotlin/com/example/
-!android/app/src/main/kotlin/com/example/accessibility_service/
-
-# Allow everything inside this source directory
-!android/app/src/main/kotlin/com/example/accessibility_service/**
-
-
-# ============================================================
-# ALLOW: Gradle configuration
-# ============================================================
-
-!android/build.gradle
-!android/settings.gradle
-!android/gradle.properties
-!android/gradle/
-!android/gradle/wrapper/
-!android/gradle/wrapper/**
-
-# If using Kotlin DSL:
-!android/build.gradle.kts
-!android/app/build.gradle.kts
-!android/settings.gradle.kts
-
-
-# ============================================================
-# ALLOW: App-level Gradle configuration
-# ============================================================
-
-!android/app/build.gradle
-!android/app/build.gradle.kts
-
-
-# ============================================================
-# ALLOW: Android resources
-# ============================================================
-
-!android/app/src/main/res/
-!android/app/src/main/res/**
-
-
-# ============================================================
-# ALLOW: AndroidManifest
-# ============================================================
-
-!android/app/src/main/AndroidManifest.xml
-
-
-# ============================================================
-# ALLOW: Root project files
-# ============================================================
-
 !.gitignore
 !README.md
 !LICENSE
+!.metadata
+!analysis_options.yaml
+!pubspec.yaml
+!pubspec.lock
+
+
+# ============================================================
+# FLUTTER / DART SOURCE
+# ============================================================
+!lib/
+!lib/**
+
+!test/
+!test/**
+
+!integration_test/
+!integration_test/**
+
+!assets/
+!assets/**
+
+
+# ============================================================
+# PYTHON SERVER SOURCE
+# ============================================================
+!server/
+!server/**
+
+# Python environments and generated caches
+server/**/__pycache__/
+server/**/*.py[cod]
+server/.pytest_cache/
+server/.mypy_cache/
+server/.ruff_cache/
+
+# Secrets and local configuration
+server/**/.env
+server/**/.env.*
+!server/**/.env.example
+
+# Runtime data containing captured/private information
+server/captures.jsonl
+server/saved_screenshots/
+server/**/*.log
+server/**/*.db
+server/**/*.sqlite
+server/**/*.sqlite3
+
+
+# ============================================================
+# ANDROID PROJECT
+# ============================================================
+!android/
+!android/.gitignore
+
+# Gradle configuration
+!android/build.gradle
+!android/build.gradle.kts
+!android/settings.gradle
+!android/settings.gradle.kts
+!android/gradle.properties
+
+# Gradle wrapper configuration
+!android/gradle/
+!android/gradle/wrapper/
+!android/gradle/wrapper/gradle-wrapper.properties
+
+# App configuration and sources
+!android/app/
+!android/app/build.gradle
+!android/app/build.gradle.kts
+!android/app/src/
+!android/app/src/**
+
+# Local Android configuration and signing secrets remain ignored by
+# the default deny rule and android/.gitignore:
+#   android/local.properties
+#   android/key.properties
+#   *.jks
+#   *.keystore
