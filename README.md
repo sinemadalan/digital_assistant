@@ -197,12 +197,14 @@ FastAPI otomatik belgeleri sunucu çalışırken şu adreslerde bulunur:
 | `GET` | `/captures?limit=20` | Son yakalama kayıtlarını listeler |
 | `GET` | `/captures/instagram/summary` | Instagram kayıt özetini döndürür |
 | `GET` | `/captures/whatsapp/summary` | WhatsApp kayıt özetini döndürür |
+| `GET` | `/captures/facebook/summary` | Facebook kayıt özetini döndürür |
 
 Kayıtları PowerShell üzerinden görüntülemek için:
 
 ```powershell
 Invoke-RestMethod "http://127.0.0.1:8000/captures?limit=5"
 Invoke-RestMethod http://127.0.0.1:8000/captures/whatsapp/summary
+Invoke-RestMethod http://127.0.0.1:8000/captures/facebook/summary
 ```
 
 ## Toplanan veri

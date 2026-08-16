@@ -223,6 +223,11 @@ def whatsapp_capture_summary() -> dict[str, Any]:
     return generate_summary(app_name="WhatsApp", package_name="com.whatsapp")
 
 
+@app.get("/captures/facebook/summary")
+def facebook_capture_summary() -> dict[str, Any]:
+    return generate_summary(app_name="Facebook", package_name="com.facebook.katana")
+
+
 def read_captures(limit: int | None = None) -> list[dict[str, Any]]:
     if not CAPTURE_LOG_PATH.exists():
         return []
