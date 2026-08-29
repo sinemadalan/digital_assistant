@@ -1,3 +1,4 @@
+import 'package:accessibility_service/pages/control_panel.dart';
 import 'package:flutter/material.dart';
 class LoginPage extends StatelessWidget{
   const LoginPage({Key? key}) : super(key: key);
@@ -5,6 +6,22 @@ class LoginPage extends StatelessWidget{
   Widget build(BuildContext context) {
 
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('Login'),
+        actions: [
+          TextButton.icon(
+            label: const Text("Go to control panel"),
+            icon: const Icon(Icons.navigate_next),
+            onPressed: () {
+              Navigator.push(
+                  context, MaterialPageRoute<void>(
+                  builder: (context) => const ControlPanel()
+              )
+              );
+            },
+          ),
+        ],
+      ),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,

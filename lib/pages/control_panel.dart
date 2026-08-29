@@ -15,7 +15,19 @@ class _ControlPanelState extends State<ControlPanel> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Accessibility Control')),
+      appBar: AppBar(
+        automaticallyImplyLeading: false,
+        title: const Text('Accessibility Control'),
+        actions: [
+          TextButton.icon(
+            icon: const Icon(Icons.navigate_before),
+            label: const Text("Go back to login page"),
+            onPressed: () {
+              Navigator.pop(context);
+            },
+          ),
+        ],
+      ),
       // The StreamBuilder is now at the top level of the body
       // It passes the state down to a clean, declarative layout function
       body: StreamBuilder<bool>(
