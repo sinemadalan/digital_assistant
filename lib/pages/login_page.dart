@@ -1,3 +1,4 @@
+import 'package:accessibility_service/Util/EnrollResult.dart';
 import 'package:accessibility_service/pages/control_panel.dart';
 import 'package:flutter/material.dart';
 import '../Util/user_auth_manager.dart' as auth;
@@ -48,11 +49,12 @@ class _LoginPageState extends State<LoginPage>{
             decoratedButtonContainer("Go", () async {
                 String key = _pairingCodeController.text;
                 String deviceName = _deviceNameController.text;
-
-                if (await auth.mockEnrollDeviceIfTokenNotExist(key, deviceName)) {
+                var result = await auth.mockEnrollDeviceIfTokenNotExist(key, deviceName);
+                if (result == EnrollResult.success) {
                   navigateToControlPanel();
                 }else{
-                  print("AW*RHAEUOGNONEGNNIOAWFHOIHAWIR");
+                  print("Error: $result");
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $result")));
                 }
               }
 
