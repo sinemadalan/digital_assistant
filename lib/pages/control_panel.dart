@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../accessibility_service_manager.dart';
-
+import '../Util/accessibility_service_manager.dart';
+import '../Util/user_auth_manager.dart' as auth;
 class ControlPanel extends StatefulWidget {
   const ControlPanel({Key? key}) : super(key: key);
 
@@ -44,15 +44,41 @@ class _ControlPanelState extends State<ControlPanel> {
   /// Organizes the main vertical structure of the screen.
   Widget _buildMainLayout(bool isRunning) {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          _buildStatusIndicator(isRunning),
-          const SizedBox(height: 30),
-          // Conditionally show either the settings button OR the pause toggle
-          if (!isRunning) _buildSettingsButton() else _buildPauseToggle(),
-        ],
-      ),
+        child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+        FutureBuilder<String?>(
+        future: auth.getToken(), // Pass the future here
+        builder: (BuildContext context, AsyncSnapshot<String?> snapshot) {
+
+          // State 1: Still loading
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const CircularProgressIndicator();
+          }
+
+          // State 2: Error occurred
+          else if (snapshot.hasError) {
+            return Text('Error: ${snapshot.error}');
+          }
+
+          // State 3: Future completed successfully
+          else if (snapshot.hasData) {
+            return Text(
+              snapshot.data!,
+              style: const TextStyle(fontSize: 24),
+            );
+          }
+
+          // Fallback state
+          return const Text('No data found');
+        },
+        ),
+        _buildStatusIndicator(isRunning),
+        const SizedBox(height: 30),
+        // Conditionally show either the settings button OR the pause toggle
+        if (!isRunning) _buildSettingsButton() else _buildPauseToggle(),
+    ],
+    ),
     );
   }
 
