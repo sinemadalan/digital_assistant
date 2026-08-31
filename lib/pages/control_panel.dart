@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../accessibility_service_manager.dart';
+import '../Util/accessibility_service_manager.dart';
 
 class ControlPanel extends StatefulWidget {
   const ControlPanel({Key? key}) : super(key: key);
