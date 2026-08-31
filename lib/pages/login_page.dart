@@ -1,9 +1,32 @@
 import 'package:accessibility_service/pages/control_panel.dart';
 import 'package:flutter/material.dart';
-class LoginPage extends StatelessWidget{
+import '../Util/user_auth_manager.dart' as auth;
+
+class LoginPage extends StatefulWidget {
   const LoginPage({Key? key}) : super(key: key);
+
   @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+class _LoginPageState extends State<LoginPage>{
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+  final TextEditingController _pairingCodeController = TextEditingController();
+  final TextEditingController _deviceNameController = TextEditingController();
+
+  // 3. Dispose of controllers when the widget is destroyed
+  @override
+  void dispose() {
+    _pairingCodeController.dispose();
+    _deviceNameController.dispose();
+    super.dispose();
+  }
+
   Widget build(BuildContext context) {
+    Future<void> navigateToControlPanel () => Navigator.push(
+        context,
+        MaterialPageRoute<void>(builder: (context) => const ControlPanel())
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -12,13 +35,7 @@ class LoginPage extends StatelessWidget{
           TextButton.icon(
             label: const Text("Go to control panel"),
             icon: const Icon(Icons.navigate_next),
-            onPressed: () {
-              Navigator.push(
-                  context, MaterialPageRoute<void>(
-                  builder: (context) => const ControlPanel()
-              )
-              );
-            },
+            onPressed: navigateToControlPanel,
           ),
         ],
       ),
@@ -26,16 +43,27 @@ class LoginPage extends StatelessWidget{
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            decoratedTextFieldContainer("Pairing Code"),
-            decoratedTextFieldContainer("Device Name"),
-            decoratedButtonContainer("Go", () {print("Pressed GO button");})
+            decoratedTextFieldContainer("Pairing Code", _pairingCodeController),
+            decoratedTextFieldContainer("Device Name", _deviceNameController),
+            decoratedButtonContainer("Go", () async {
+                String key = _pairingCodeController.text;
+                String deviceName = _deviceNameController.text;
+
+                if (await auth.mockEnrollDeviceIfTokenNotExist(key, deviceName)) {
+                  navigateToControlPanel();
+                }else{
+                  print("AW*RHAEUOGNONEGNNIOAWFHOIHAWIR");
+                }
+              }
+
+            )
           ],
         ),
       ),
     );
   }
 
-  Container decoratedTextFieldContainer(String str){
+  Container decoratedTextFieldContainer(String str, TextEditingController controller){
     return Container(
       margin: EdgeInsets.only(top: 20,left: 20,right: 20),
       decoration: BoxDecoration(
@@ -48,7 +76,7 @@ class LoginPage extends StatelessWidget{
         ],
       ),
       child: TextField(
-
+        controller: controller,
         decoration: InputDecoration(
             hintText: str,
             filled:true,
