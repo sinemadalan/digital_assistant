@@ -1,13 +1,19 @@
 import 'package:accessibility_service/pages/control_panel.dart';
 import 'package:accessibility_service/pages/login_page.dart';
 import 'package:flutter/material.dart';
+import 'Util/user_auth_manager.dart' as auth;
 
-void main() {
-  runApp(const MyApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final is_authenticated = await auth.checkIfTokenExists();
+  runApp(MyApp(is_authenticated));
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({Key? key}) : super(key: key);
+  bool user_is_authenticated = false;
+  MyApp(bool isUserAuthenticated, {Key? key}) : super(key: key){
+    user_is_authenticated=isUserAuthenticated;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -17,7 +23,7 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.blue,
       ),
       // This is where you inject your Scaffold
-      home: const LoginPage(),
+      home: user_is_authenticated ? ControlPanel() : LoginPage(),
     );
   }
 }

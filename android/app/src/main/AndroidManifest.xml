@@ -5,7 +5,9 @@
         android:label="accessibility_service"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
         android:usesCleartextTraffic="true">
+        <!--Disable automatic backups for flutter_secure_storage-->
         <activity
             android:name=".MainActivity"
             android:exported="true"
