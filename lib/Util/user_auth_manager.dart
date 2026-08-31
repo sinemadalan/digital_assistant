@@ -54,8 +54,7 @@ Future<EnrollResult> mockEnrollDeviceIfTokenNotExist(String enrollmentCode, Stri
 
       final String token = responseData['token'];
 
-      print("Token: $token");
-      writeTokenIfNotExist(token);
+      await writeTokenIfNotExist(token);
 
       return EnrollResult.success;
     }
