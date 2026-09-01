@@ -5,8 +5,12 @@ import 'Util/user_auth_manager.dart' as auth;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final is_authenticated = await auth.checkIfTokenExists();
-  runApp(MyApp(is_authenticated));
+  final token = await auth.getToken();
+  final isAuthenticated = token != null && token.trim().isNotEmpty;
+  if (token != null && token.trim().isNotEmpty) {
+    await auth.syncTokenToNative(token);
+  }
+  runApp(MyApp(isAuthenticated));
 }
 
 class MyApp extends StatelessWidget {

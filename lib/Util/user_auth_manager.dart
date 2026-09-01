@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+import './accessibility_service_manager.dart';
 import './EnrollResult.dart';
+
 final storage = FlutterSecureStorage();
 const AUTHKEY = "JWT-Server-Auth-Token";
 
@@ -15,17 +18,44 @@ Future<bool> checkIfTokenExists() async {
   return await storage.containsKey(key: AUTHKEY);
 }
 
-Future<bool> writeTokenIfNotExist(String val) async{
+Future<bool> writeTokenIfNotExist(String val) async {
   if (await checkIfTokenExists() == true) {
     return false;
   }
-  await storage.write(key: AUTHKEY, value: val);
+  await writeToken(val);
   return true;
 }
 
-void forceDeleteToken(bool areYouSure) async {
-  if (areYouSure == true){
+Future<void> writeToken(String val) async {
+  if (val.trim().isEmpty) {
+    throw ArgumentError('Token must not be blank');
+  }
+  await storage.write(key: AUTHKEY, value: val);
+  await syncTokenToNative(val);
+}
+
+Future<void> forceDeleteToken(bool areYouSure) async {
+  if (areYouSure == true) {
+    await AccessibilityManager.clearAuthToken();
     await storage.delete(key: AUTHKEY);
+  }
+}
+
+Future<bool> syncTokenToNative(String token) async {
+  if (token.trim().isEmpty) {
+    return false;
+  }
+
+  try {
+    await AccessibilityManager.setAuthToken(token);
+    return true;
+  } catch (e) {
+    developer.log(
+      'Failed to synchronize the authentication token to Android.',
+      name: 'user_auth_manager',
+      error: e,
+    );
+    return false;
   }
 }
 
@@ -34,7 +64,7 @@ Future<EnrollResult> mockEnrollDeviceIfTokenNotExist(String enrollmentCode, Stri
     if (await checkIfTokenExists()) {
       return EnrollResult.tokenAlreadyExists;
     }
-    forceDeleteToken(true);
+    await forceDeleteToken(true);
 
     final url = Uri.parse('https://api.152-70-40-87.nip.io/v1/enroll');
 

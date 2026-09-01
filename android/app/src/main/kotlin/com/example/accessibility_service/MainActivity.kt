@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 class MainActivity : FlutterActivity(){
     private val EVENT_CHANNEL = "com.your.package/accessibility_status"
     private val METHOD_CHANNEL = "com.your.package/accessibility_commands"
+    private val nativeTokenStore by lazy { NativeTokenStore(applicationContext) }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -50,6 +51,41 @@ class MainActivity : FlutterActivity(){
                     "openSettings" -> {
                         openAccessibilitySettings()
                         result.success(null)
+                    }
+                    "setAuthToken" -> {
+                        val token = call.argument<String>("token")
+                        if (token.isNullOrBlank()) {
+                            result.error("INVALID_TOKEN", "Authentication token must not be blank.", null)
+                        } else {
+                            lifecycleScope.launch {
+                                try {
+                                    nativeTokenStore.saveToken(token)
+                                } catch (e: Exception) {
+                                    result.error(
+                                        "TOKEN_STORAGE_ERROR",
+                                        "Unable to persist the authentication token.",
+                                        null,
+                                    )
+                                    return@launch
+                                }
+                                result.success(null)
+                            }
+                        }
+                    }
+                    "clearAuthToken" -> {
+                        lifecycleScope.launch {
+                            try {
+                                nativeTokenStore.clearToken()
+                            } catch (e: Exception) {
+                                result.error(
+                                    "TOKEN_STORAGE_ERROR",
+                                    "Unable to clear the authentication token.",
+                                    null,
+                                )
+                                return@launch
+                            }
+                            result.success(null)
+                        }
                     }
                     else -> result.notImplemented()
                 }
