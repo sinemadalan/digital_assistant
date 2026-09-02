@@ -29,20 +29,56 @@ private val Context.nativeTokenDataStore: DataStore<Preferences> by preferencesD
 )
 private val nativeTokenStoreMutex = Mutex()
 
-class NativeTokenStore(context: Context) {
-    private val dataStore = context.applicationContext.nativeTokenDataStore
+class NativeTokenStore internal constructor(
+    private val dataStore: DataStore<Preferences>,
+    private val tokenCipher: TokenCipher,
+) {
+    constructor(context: Context) : this(
+        dataStore = context.applicationContext.nativeTokenDataStore,
+        tokenCipher = AndroidKeystoreTokenCipher(),
+    )
 
-    suspend fun saveToken(token: String) {
+    /**
+     * Synchronizes an already-issued token without overriding a persisted revocation.
+     *
+     * The revocation check and write share the same process-wide mutex as [clearToken],
+     * so a stale startup synchronization cannot race a 401 revocation back to valid.
+     */
+    suspend fun synchronizeExistingToken(token: String): Boolean {
+        require(token.isNotBlank()) { "Authentication token must not be blank." }
+
+        return nativeTokenStoreMutex.withLock {
+            val preferences = dataStore.data.first()
+            if (preferences[KEY_TOKEN_REVOKED] == true) {
+                return@withLock false
+            }
+
+            val encryptedToken = withContext(Dispatchers.IO) { tokenCipher.encrypt(token) }
+            dataStore.edit { preferences ->
+                preferences[KEY_CIPHERTEXT] = encryptedToken.ciphertext
+                preferences[KEY_IV] = encryptedToken.iv
+                preferences[KEY_TOKEN_REVOKED] = false
+            }
+            true
+        }
+    }
+
+    /** Installs a token returned by a successful, trusted enrollment. */
+    internal suspend fun installFreshToken(token: String) {
         require(token.isNotBlank()) { "Authentication token must not be blank." }
 
         nativeTokenStoreMutex.withLock {
-            val encryptedToken = withContext(Dispatchers.IO) { encrypt(token) }
+            val encryptedToken = withContext(Dispatchers.IO) { tokenCipher.encrypt(token) }
             dataStore.edit { preferences ->
                 preferences[KEY_CIPHERTEXT] = encryptedToken.ciphertext
                 preferences[KEY_IV] = encryptedToken.iv
                 preferences[KEY_TOKEN_REVOKED] = false
             }
         }
+    }
+
+    suspend fun isReauthenticationRequired(): Boolean = nativeTokenStoreMutex.withLock {
+        dataStore.data.first()[KEY_TOKEN_REVOKED] == true
     }
 
     suspend fun getToken(): String? = nativeTokenStoreMutex.withLock {
@@ -62,7 +98,7 @@ class NativeTokenStore(context: Context) {
         val encodedIv = preferences[KEY_IV] ?: return@withLock null
 
         try {
-            withContext(Dispatchers.IO) { decrypt(encodedCiphertext, encodedIv) }
+            withContext(Dispatchers.IO) { tokenCipher.decrypt(encodedCiphertext, encodedIv) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -82,7 +118,25 @@ class NativeTokenStore(context: Context) {
 
     suspend fun hasToken(): Boolean = getToken() != null
 
-    private fun encrypt(token: String): EncryptedToken {
+    private companion object {
+        val KEY_CIPHERTEXT = stringPreferencesKey("ciphertext")
+        val KEY_IV = stringPreferencesKey("iv")
+        val KEY_TOKEN_REVOKED = booleanPreferencesKey("token_revoked")
+    }
+}
+
+internal interface TokenCipher {
+    fun encrypt(token: String): EncryptedToken
+    fun decrypt(encodedCiphertext: String, encodedIv: String): String
+}
+
+internal data class EncryptedToken(
+    val ciphertext: String,
+    val iv: String,
+)
+
+private class AndroidKeystoreTokenCipher : TokenCipher {
+    override fun encrypt(token: String): EncryptedToken {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
         val ciphertext = cipher.doFinal(token.toByteArray(StandardCharsets.UTF_8))
@@ -92,7 +146,7 @@ class NativeTokenStore(context: Context) {
         )
     }
 
-    private fun decrypt(encodedCiphertext: String, encodedIv: String): String {
+    override fun decrypt(encodedCiphertext: String, encodedIv: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         val iv = Base64.decode(encodedIv, Base64.NO_WRAP)
         cipher.init(Cipher.DECRYPT_MODE, getSecretKey(), GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
@@ -130,18 +184,10 @@ class NativeTokenStore(context: Context) {
         return KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
     }
 
-    private data class EncryptedToken(
-        val ciphertext: String,
-        val iv: String,
-    )
-
     private companion object {
         const val KEYSTORE_PROVIDER = "AndroidKeyStore"
         const val KEY_ALIAS = "digital_assistant_native_auth_token_aes"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val GCM_TAG_LENGTH_BITS = 128
-        val KEY_CIPHERTEXT = stringPreferencesKey("ciphertext")
-        val KEY_IV = stringPreferencesKey("iv")
-        val KEY_TOKEN_REVOKED = booleanPreferencesKey("token_revoked")
     }
 }

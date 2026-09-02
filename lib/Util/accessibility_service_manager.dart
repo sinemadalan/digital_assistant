@@ -1,8 +1,12 @@
 import 'package:flutter/services.dart';
 
 class AccessibilityManager {
-  static const EventChannel _eventChannel = EventChannel('com.your.package/accessibility_status');
-  static const MethodChannel _methodChannel = MethodChannel('com.your.package/accessibility_commands');
+  static const EventChannel _eventChannel = EventChannel(
+    'com.your.package/accessibility_status',
+  );
+  static const MethodChannel _methodChannel = MethodChannel(
+    'com.your.package/accessibility_commands',
+  );
 
   /// Returns a stream that actively listens to the Android service lifecycle.
   /// Use this in a StreamBuilder in your UI.
@@ -21,11 +25,32 @@ class AccessibilityManager {
   }
 
   /// Persists the authentication token in Android's native encrypted store.
-  static Future<void> setAuthToken(String token) async {
+  static Future<bool> setAuthToken(String token) async {
     if (token.trim().isEmpty) {
       throw ArgumentError('Token must not be blank');
     }
-    await _methodChannel.invokeMethod('setAuthToken', {'token': token});
+    return await _methodChannel.invokeMethod<bool>('setAuthToken', {
+          'token': token,
+        }) ??
+        false;
+  }
+
+  /// Installs a token returned by a successful enrollment and clears revocation.
+  static Future<void> installFreshAuthToken(String token) async {
+    if (token.trim().isEmpty) {
+      throw ArgumentError('Token must not be blank');
+    }
+    await _methodChannel.invokeMethod('installFreshAuthToken', {
+      'token': token,
+    });
+  }
+
+  /// Reads the persistent native state set when an upload receives HTTP 401.
+  static Future<bool> isReauthenticationRequired() async {
+    return await _methodChannel.invokeMethod<bool>(
+          'isReauthenticationRequired',
+        ) ??
+        true;
   }
 
   /// Removes the authentication token from Android's native encrypted store.

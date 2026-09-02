@@ -59,7 +59,8 @@ class MainActivity : FlutterActivity(){
                         } else {
                             lifecycleScope.launch {
                                 try {
-                                    nativeTokenStore.saveToken(token)
+                                    val accepted = nativeTokenStore.synchronizeExistingToken(token)
+                                    result.success(accepted)
                                 } catch (e: Exception) {
                                     result.error(
                                         "TOKEN_STORAGE_ERROR",
@@ -68,7 +69,39 @@ class MainActivity : FlutterActivity(){
                                     )
                                     return@launch
                                 }
+                            }
+                        }
+                    }
+                    "installFreshAuthToken" -> {
+                        val token = call.argument<String>("token")
+                        if (token.isNullOrBlank()) {
+                            result.error("INVALID_TOKEN", "Authentication token must not be blank.", null)
+                        } else {
+                            lifecycleScope.launch {
+                                try {
+                                    nativeTokenStore.installFreshToken(token)
+                                } catch (e: Exception) {
+                                    result.error(
+                                        "TOKEN_STORAGE_ERROR",
+                                        "Unable to persist the fresh authentication token.",
+                                        null,
+                                    )
+                                    return@launch
+                                }
                                 result.success(null)
+                            }
+                        }
+                    }
+                    "isReauthenticationRequired" -> {
+                        lifecycleScope.launch {
+                            try {
+                                result.success(nativeTokenStore.isReauthenticationRequired())
+                            } catch (e: Exception) {
+                                result.error(
+                                    "TOKEN_STORAGE_ERROR",
+                                    "Unable to read the native authentication state.",
+                                    null,
+                                )
                             }
                         }
                     }

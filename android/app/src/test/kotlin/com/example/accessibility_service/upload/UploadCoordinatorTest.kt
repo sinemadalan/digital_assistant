@@ -159,6 +159,7 @@ class UploadCoordinatorTest {
         assertEquals(UploadOutcome.TokenRevoked, first)
         assertEquals(UploadOutcome.NoValidToken, second)
         assertEquals(1, tokenStore.revokeCalls)
+        assertTrue(tokenStore.reauthenticationRequired)
         assertEquals(1, queue.peekCalls)
         assertEquals(0, queue.acknowledgeCalls)
         assertEquals(1, client.calls)
@@ -363,6 +364,7 @@ private class FakeTokenStore(initialToken: String?) : UploadTokenStore {
     private var token = initialToken
     var getCalls = 0
     var revokeCalls = 0
+    var reauthenticationRequired = false
 
     override suspend fun getToken(): String? {
         getCalls += 1
@@ -372,6 +374,7 @@ private class FakeTokenStore(initialToken: String?) : UploadTokenStore {
     override suspend fun revokeToken() {
         revokeCalls += 1
         token = null
+        reauthenticationRequired = true
     }
 }
 
