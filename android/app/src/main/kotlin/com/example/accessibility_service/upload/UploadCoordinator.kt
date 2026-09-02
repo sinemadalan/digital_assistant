@@ -1,5 +1,6 @@
 package com.example.accessibility_service.upload
 
+import android.util.Log
 import com.example.accessibility_service.NativeTokenStore
 import com.example.accessibility_service.networking.CapturesApiClient
 import com.example.accessibility_service.networking.CapturesApiResult
@@ -54,15 +55,18 @@ class UploadCoordinator internal constructor(
     private val tokenStore: UploadTokenStore,
     private val queue: UploadEventQueue,
     private val apiClient: UploadCapturesClient,
+    private val pipelineLogger: (String) -> Unit = {},
 ) {
     constructor(
         tokenStore: NativeTokenStore,
         queue: PersistentEventQueue,
         apiClient: CapturesApiClient = CapturesApiClient(),
+        pipelineLogger: (String) -> Unit = { message -> Log.i(PHASE5A_TAG, message) },
     ) : this(
         tokenStore = NativeTokenStoreAdapter(tokenStore),
         queue = PersistentEventQueueAdapter(queue),
         apiClient = CapturesApiClientAdapter(apiClient),
+        pipelineLogger = pipelineLogger,
     )
 
     private val uploadMutex = Mutex()
@@ -88,16 +92,24 @@ class UploadCoordinator internal constructor(
 
     private suspend fun uploadOneBatch(): UploadOutcome {
         val token = tokenStore.getToken()
-        if (token.isNullOrBlank()) return UploadOutcome.NoValidToken
+        if (token.isNullOrBlank()) {
+            pipelineLogger("Phase5A: upload skipped, reason=NO_VALID_TOKEN")
+            return UploadOutcome.NoValidToken
+        }
 
         val batch = queue.peekBatch(config.batchSize)
         if (batch.captures.isEmpty()) return UploadOutcome.QueueEmpty
         val acknowledgmentToken = checkNotNull(batch.acknowledgmentToken) {
             "A non-empty queue batch must include an acknowledgment token."
         }
+        pipelineLogger("Phase5A: upload started, batchCount=${batch.captures.size}")
 
         return when (val result = apiClient.sendCaptures(token, batch.captures)) {
             is CapturesApiResult.Success -> {
+                pipelineLogger(
+                    "Phase5A: upload accepted=${result.response.accepted}, " +
+                        "skipped=${result.response.skipped}",
+                )
                 applyValidConfig(result.response.config.batchSize, result.response.config.flushSeconds)
                 acknowledgeAcceptedBatch(
                     token = acknowledgmentToken,
@@ -107,18 +119,39 @@ class UploadCoordinator internal constructor(
             }
             CapturesApiResult.Unauthorized -> {
                 tokenStore.revokeToken()
+                pipelineLogger(
+                    "Phase5A: upload unauthorized, token revoked, reauthentication required",
+                )
                 UploadOutcome.TokenRevoked
             }
-            CapturesApiResult.Unprocessable -> acknowledgeUnprocessableBatch(acknowledgmentToken)
-            CapturesApiResult.ServiceUnavailable ->
+            CapturesApiResult.Unprocessable -> {
+                pipelineLogger("Phase5A: upload rejected status=422")
+                acknowledgeUnprocessableBatch(acknowledgmentToken)
+            }
+            CapturesApiResult.ServiceUnavailable -> {
+                pipelineLogger("Phase5A: upload retryable failure: SERVICE_UNAVAILABLE")
                 UploadOutcome.RetryableFailure(RetryableFailureReason.SERVICE_UNAVAILABLE)
-            CapturesApiResult.Timeout ->
+            }
+            CapturesApiResult.Timeout -> {
+                pipelineLogger("Phase5A: upload retryable failure: TIMEOUT")
                 UploadOutcome.RetryableFailure(RetryableFailureReason.TIMEOUT)
-            is CapturesApiResult.NetworkError ->
+            }
+            is CapturesApiResult.NetworkError -> {
+                pipelineLogger("Phase5A: upload retryable failure: NETWORK_ERROR")
                 UploadOutcome.RetryableFailure(RetryableFailureReason.NETWORK_ERROR)
-            is CapturesApiResult.InvalidResponse -> UploadOutcome.InvalidResponse(result.reason)
-            is CapturesApiResult.OtherHttpError -> UploadOutcome.OtherHttpFailure(result.statusCode)
-            is CapturesApiResult.InvalidRequest -> UploadOutcome.InvalidRequest(result.reason)
+            }
+            is CapturesApiResult.InvalidResponse -> {
+                pipelineLogger("Phase5A: invalid backend response")
+                UploadOutcome.InvalidResponse(result.reason)
+            }
+            is CapturesApiResult.OtherHttpError -> {
+                pipelineLogger("Phase5A: upload rejected status=${result.statusCode}")
+                UploadOutcome.OtherHttpFailure(result.statusCode)
+            }
+            is CapturesApiResult.InvalidRequest -> {
+                pipelineLogger("Phase5A: upload rejected reason=${result.reason}")
+                UploadOutcome.InvalidRequest(result.reason)
+            }
         }
     }
 
@@ -146,6 +179,7 @@ class UploadCoordinator internal constructor(
     }
 
     companion object {
+        private const val PHASE5A_TAG = "Phase5A"
         const val DEFAULT_BATCH_SIZE = 30
         const val DEFAULT_FLUSH_SECONDS = 20
         const val MAX_BATCH_SIZE = CapturesApiClient.MAX_EVENTS_PER_REQUEST

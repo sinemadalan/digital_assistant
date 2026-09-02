@@ -1,5 +1,6 @@
 package com.example.accessibility_service.networking
 
+import android.util.Log
 import com.example.accessibility_service.persistence.QueuedCapture
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -16,8 +17,13 @@ import kotlinx.coroutines.withContext
 class CapturesApiClient internal constructor(
     private val transport: CapturesHttpTransport,
     private val ioDispatcher: CoroutineDispatcher,
+    private val pipelineLogger: (String) -> Unit = {},
 ) {
-    constructor() : this(UrlConnectionCapturesTransport(), Dispatchers.IO)
+    constructor() : this(
+        UrlConnectionCapturesTransport(),
+        Dispatchers.IO,
+        { message -> Log.i(PHASE5A_TAG, message) },
+    )
 
     suspend fun sendCaptures(
         token: String?,
@@ -29,6 +35,7 @@ class CapturesApiClient internal constructor(
 
         return withContext(ioDispatcher) {
             val response = try {
+                pipelineLogger("Phase5A: POST $ENDPOINT_PATH, events=${captures.size}")
                 transport.post(nonBlankToken, requestBody)
             } catch (_: SocketTimeoutException) {
                 return@withContext CapturesApiResult.Timeout
@@ -37,6 +44,7 @@ class CapturesApiClient internal constructor(
             } catch (error: IOException) {
                 return@withContext CapturesApiResult.NetworkError(error)
             }
+            pipelineLogger("Phase5A: $ENDPOINT_PATH response status=${response.statusCode}")
 
             when {
                 response.statusCode in 200..299 -> parseSuccess(response.body, captures.size)
@@ -66,6 +74,7 @@ class CapturesApiClient internal constructor(
     }
 
     companion object {
+        private const val PHASE5A_TAG = "Phase5A"
         const val BASE_URL = "https://api.152-70-40-87.nip.io"
         const val ENDPOINT_PATH = "/v1/captures"
         const val MAX_EVENTS_PER_REQUEST = 50

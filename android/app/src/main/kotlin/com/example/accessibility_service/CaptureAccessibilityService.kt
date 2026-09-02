@@ -11,14 +11,25 @@ import androidx.annotation.RequiresApi
 import com.example.accessibility_service.Util.NetworkSyncManager
 import com.example.accessibility_service.Util.NodeWalker
 import com.example.accessibility_service.Util.ScreenSummary
+import com.example.accessibility_service.networking.CapturesApiClient
+import com.example.accessibility_service.persistence.PersistentEventQueue
+import com.example.accessibility_service.upload.AccessibilityCaptureMapper
+import com.example.accessibility_service.upload.CaptureInitializationBuffer
+import com.example.accessibility_service.upload.CaptureSubmissionResult
+import com.example.accessibility_service.upload.CaptureQueueBridge
+import com.example.accessibility_service.upload.UploadCoordinator
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.time.OffsetDateTime
 import java.util.concurrent.atomic.AtomicBoolean
 
 object AccessibilityState {
@@ -37,10 +48,17 @@ object AccessibilityState {
 class CaptureAccessibilityService : AccessibilityService() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private val persistentInitializationStarted = AtomicBoolean(false)
+    private val persistentLifecycleLock = Any()
+    private val captureInitializationBuffer = CaptureInitializationBuffer()
+    private var serviceDestroyed = false
+    @Volatile private var persistentQueue: PersistentEventQueue? = null
+    @Volatile private var captureQueueBridge: CaptureQueueBridge? = null
     companion object {
         private val network_man = NetworkSyncManager("http://10.0.2.2:8000")
         private val nodewalker = NodeWalker();
         private const val TAG = "CaptureA11yService"
+        private const val PHASE5A_TAG = "Phase5A"
         private const val SUMMARY_THROTTLE_MS = 5_000L
         private const val SCREENSHOT_THROTTLE_MS = 60_000L
         private const val SCREENSHOT_JPEG_QUALITY = 80
@@ -65,6 +83,11 @@ class CaptureAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         AccessibilityState.setRunning(true)
         Log.i(TAG, "Capture accessibility service connected")
+        if (persistentInitializationStarted.compareAndSet(false, true)) {
+            initializePersistentCapturePipeline()
+        } else {
+            captureQueueBridge?.onServiceStarted()
+        }
     }
     override fun onUnbind(intent: Intent?) : Boolean {
         AccessibilityState.setRunning(false)
@@ -74,7 +97,28 @@ class CaptureAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         // Catch-all for when the service is destroyed
         AccessibilityState.setRunning(false)
+        val (bridge, queue) = synchronized(persistentLifecycleLock) {
+            serviceDestroyed = true
+            val resources = captureQueueBridge to persistentQueue
+            captureQueueBridge = null
+            persistentQueue = null
+            resources
+        }
+        val discardedCaptures = captureInitializationBuffer.close()
+        if (discardedCaptures > 0) {
+            Log.w(TAG, "Discarded $discardedCaptures volatile capture(s) during service teardown")
+        }
+        bridge?.close()
         serviceScope.cancel()
+        queue?.let {
+            CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+                try {
+                    it.close()
+                } catch (error: Exception) {
+                    Log.e(TAG, "Persistent capture queue close failed: ${error.javaClass.simpleName}")
+                }
+            }
+        }
         super.onDestroy()
     }
 
@@ -86,6 +130,8 @@ class CaptureAccessibilityService : AccessibilityService() {
         val packageName = event.packageName?.toString() ?: return
         val appName = TARGET_APPS[packageName] ?: return
         val now = System.currentTimeMillis()
+        val capturedAt = OffsetDateTime.now()
+        val capturedEventName = eventName(event.eventType)
         val lastSummaryTime = lastSummaryTimeByPackage[packageName] ?: 0L
         val shouldSendSummary = now - lastSummaryTime >= SUMMARY_THROTTLE_MS
 
@@ -93,23 +139,45 @@ class CaptureAccessibilityService : AccessibilityService() {
         val shouldSendScreenshot = now - lastScreenshotTime >= SCREENSHOT_THROTTLE_MS
 
         if (!shouldSendSummary && !shouldSendScreenshot) return
-        Log.d(TAG, "Captured event for $appName: ${eventName(event.eventType)}")
+        Log.d(TAG, "Captured event for $appName: $capturedEventName")
 
         val screenSummary = collectScreenSummary()
         Log.d(
             TAG,
-            "Captured screen summary: app=$appName, event=${eventName(event.eventType)}, " +
+            "Captured screen summary: app=$appName, event=$capturedEventName, " +
                 "package=$packageName, nodeCount=${screenSummary.nodeCount}, " +
-                "textCount=${screenSummary.texts.size}, texts=${screenSummary.texts}"
+                "textCount=${screenSummary.texts.size}"
         )
         if (shouldSendSummary) {
             lastSummaryTimeByPackage[packageName] = now
-            network_man.sendCaptureSummary(
+            val queuedCapture = AccessibilityCaptureMapper.map(
                 packageName = packageName,
                 appName = appName,
-                eventType = eventName(event.eventType),
+                eventType = capturedEventName,
                 screenSummary = screenSummary,
+                isTargetApp = TARGET_APPS.containsKey(packageName),
+                isSupportedEventType = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+                    event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                capturedAt = capturedAt,
             )
+            val submission = captureInitializationBuffer.submit(queuedCapture) {
+                // The legacy endpoint remains transitional, but never runs before queue persistence.
+                network_man.sendCaptureSummary(
+                    packageName = packageName,
+                    appName = appName,
+                    eventType = capturedEventName,
+                    screenSummary = screenSummary,
+                )
+            }
+            when (submission) {
+                CaptureSubmissionResult.BUFFERED_AFTER_DROPPING_OLDEST ->
+                    Log.w(TAG, "Capture initialization buffer was full; its oldest capture was discarded")
+                CaptureSubmissionResult.UNAVAILABLE ->
+                    Log.w(TAG, "Persistent capture pipeline is unavailable; capture was not submitted")
+                CaptureSubmissionResult.SUBMITTED,
+                CaptureSubmissionResult.BUFFERED,
+                -> Unit
+            }
         }
 
         if (!shouldSendScreenshot || !screenshotInProgress.compareAndSet(false, true)) return
@@ -172,6 +240,59 @@ class CaptureAccessibilityService : AccessibilityService() {
     private fun collectScreenSummary(): ScreenSummary {
         val rootNode = rootInActiveWindow ?: return ScreenSummary()
         return nodewalker.walk(rootNode);
+    }
+
+    private fun initializePersistentCapturePipeline() {
+        serviceScope.launch {
+            var openedQueue: PersistentEventQueue? = null
+            var bridge: CaptureQueueBridge? = null
+            try {
+                openedQueue = PersistentEventQueue.open(applicationContext)
+                val coordinator = UploadCoordinator(
+                    tokenStore = NativeTokenStore(applicationContext),
+                    queue = openedQueue,
+                    apiClient = CapturesApiClient(),
+                )
+                bridge = CaptureQueueBridge(
+                    scope = serviceScope,
+                    queue = openedQueue,
+                    uploader = coordinator,
+                    diagnosticLogger = { message -> Log.w(TAG, message) },
+                    pipelineLogger = { message -> Log.i(PHASE5A_TAG, message) },
+                )
+                val installed = synchronized(persistentLifecycleLock) {
+                    if (serviceDestroyed) {
+                        false
+                    } else {
+                        persistentQueue = openedQueue
+                        captureQueueBridge = bridge
+                        true
+                    }
+                }
+                if (installed) {
+                    openedQueue = null
+                    val attachResult = captureInitializationBuffer.attach(bridge)
+                    if (attachResult.rejectedCount > 0) {
+                        Log.w(TAG, "Persistent bridge rejected ${attachResult.rejectedCount} buffered capture(s)")
+                    }
+                    bridge.onServiceStarted()
+                    bridge = null
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.e(TAG, "Persistent capture pipeline initialization failed: ${error.javaClass.simpleName}")
+                val discardedCaptures = captureInitializationBuffer.close()
+                if (discardedCaptures > 0) {
+                    Log.w(TAG, "Discarded $discardedCaptures volatile capture(s) after initialization failure")
+                }
+            } finally {
+                withContext(NonCancellable) {
+                    bridge?.close()
+                    openedQueue?.close()
+                }
+            }
+        }
     }
 
 

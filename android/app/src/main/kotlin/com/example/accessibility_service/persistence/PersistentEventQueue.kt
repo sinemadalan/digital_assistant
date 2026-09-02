@@ -15,7 +15,12 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 sealed interface EnqueueResult {
-    data class Enqueued(val sequence: Long, val droppedOldestCount: Int) : EnqueueResult
+    data class Enqueued(
+        val sequence: Long,
+        val droppedOldestCount: Int,
+        /** Physical records tracked by the selected queue header, including decodable-corrupt records. */
+        val pendingPhysicalRecordCount: Int,
+    ) : EnqueueResult
     data class Oversized(val recordBytes: Int, val usableCapacityBytes: Int) : EnqueueResult
 }
 
@@ -166,8 +171,21 @@ class PersistentEventQueue private constructor(
                 metadata.nextSequence += 1
                 metadata.droppedDueToCapacity += droppedCount.toLong()
                 persistMetadataMutation()
-                EnqueueResult.Enqueued(sequence, droppedCount)
+                EnqueueResult.Enqueued(sequence, droppedCount, metadata.recordCount)
             }
+        }
+    }
+
+    /**
+     * Returns the selected header's physical record count without [pendingCount]'s defensive scan.
+     * A record whose framing/sequence was accepted during recovery but whose payload later fails CRC or
+     * decoding remains included until head cleanup. This is intended only for trigger bookkeeping;
+     * [peekBatch] remains the authority for uploadable records.
+     */
+    suspend fun currentPhysicalRecordCount(): Int = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            ensureOpen()
+            metadata.recordCount
         }
     }
 

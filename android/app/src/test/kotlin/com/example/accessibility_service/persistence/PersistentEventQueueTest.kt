@@ -17,6 +17,7 @@ class PersistentEventQueueTest {
     fun emptyQueueHasNoBatchAndIsEmpty() = runTest {
         val queue = newQueue()
         assertTrue(queue.isEmpty())
+        assertEquals(0, queue.currentPhysicalRecordCount())
         assertEquals(0, queue.pendingCount())
         assertTrue(queue.peekBatch(10).captures.isEmpty())
         queue.close()
@@ -26,8 +27,10 @@ class PersistentEventQueueTest {
     fun singleEnqueueCanBePeekedWithoutDeletion() = runTest {
         val queue = newQueue()
         val capture = capture(1)
-        queue.enqueue(capture)
+        val result = queue.enqueue(capture) as EnqueueResult.Enqueued
 
+        assertEquals(1, result.pendingPhysicalRecordCount)
+        assertEquals(1, queue.currentPhysicalRecordCount())
         assertEquals(listOf(capture), queue.peekBatch(1).captures)
         assertEquals(listOf(capture), queue.peekBatch(1).captures)
         assertEquals(1, queue.pendingCount())
@@ -40,6 +43,7 @@ class PersistentEventQueueTest {
         val expected = (1..5).map(::capture)
         expected.forEach { queue.enqueue(it) }
 
+        assertEquals(5, queue.currentPhysicalRecordCount())
         assertEquals(expected, queue.peekBatch(10).captures)
         queue.close()
     }
@@ -54,6 +58,7 @@ class PersistentEventQueueTest {
             AcknowledgeResult.FullyAcknowledged,
             queue.acknowledge(requireNotNull(batch.acknowledgmentToken)),
         )
+        assertEquals(2, queue.currentPhysicalRecordCount())
         assertEquals(listOf(capture(3), capture(4)), queue.peekBatch(10).captures)
         assertEquals(2, queue.pendingCount())
         queue.close()
@@ -69,6 +74,7 @@ class PersistentEventQueueTest {
         queue.close()
 
         queue = open(file)
+        assertEquals(2, queue.currentPhysicalRecordCount())
         assertEquals(listOf(capture(1), capture(2)), queue.peekBatch(10).captures)
         queue.close()
     }
@@ -97,6 +103,7 @@ class PersistentEventQueueTest {
         queue.acknowledge(requireNotNull(acknowledged.acknowledgmentToken))
         queue.enqueue(capture(99))
 
+        assertEquals(2, queue.currentPhysicalRecordCount())
         assertEquals(listOf(capture(initialCount), capture(99)), queue.peekBatch(10).captures)
         queue.close()
     }
@@ -135,6 +142,7 @@ class PersistentEventQueueTest {
         repeat(20) { queue.enqueue(capture(it)) }
         val remaining = queue.peekBatch(100).captures
 
+        assertEquals(remaining.size, queue.currentPhysicalRecordCount())
         assertTrue(remaining.first().packageName != capture(0).packageName)
         assertEquals(capture(19), remaining.last())
         assertTrue(queue.diagnostics().droppedDueToCapacity > 0)
@@ -168,7 +176,10 @@ class PersistentEventQueueTest {
         }
 
         queue = open(file)
+        assertEquals(2, queue.currentPhysicalRecordCount())
+        assertEquals(1, queue.pendingCount())
         assertEquals(listOf(capture(2)), queue.peekBatch(10).captures)
+        assertEquals(1, queue.currentPhysicalRecordCount())
         assertEquals(1, queue.diagnostics().corruptRecordCount)
         queue.close()
     }
@@ -366,6 +377,7 @@ class PersistentEventQueueTest {
         val logs = mutableListOf<String>()
         val queue = open(file, diagnosticLogger = logs::add)
 
+        assertEquals(1, queue.currentPhysicalRecordCount())
         assertEquals(listOf(ringCapture(1)), queue.peekBatch(10).captures)
         assertEquals(1, queue.pendingCount())
         assertTrue(logs.any { it.contains("older consistent header metadata") })
