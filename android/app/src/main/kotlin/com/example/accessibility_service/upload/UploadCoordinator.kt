@@ -19,6 +19,7 @@ data class UploadRuntimeConfig(
 
 enum class RetryableFailureReason {
     SERVICE_UNAVAILABLE,
+    SERVER_ERROR,
     TIMEOUT,
     NETWORK_ERROR,
 }
@@ -131,6 +132,10 @@ class UploadCoordinator internal constructor(
             CapturesApiResult.ServiceUnavailable -> {
                 pipelineLogger("Phase5A: upload retryable failure: SERVICE_UNAVAILABLE")
                 UploadOutcome.RetryableFailure(RetryableFailureReason.SERVICE_UNAVAILABLE)
+            }
+            is CapturesApiResult.RetryableServerError -> {
+                pipelineLogger("Phase5A: upload retryable failure: SERVER_ERROR")
+                UploadOutcome.RetryableFailure(RetryableFailureReason.SERVER_ERROR)
             }
             CapturesApiResult.Timeout -> {
                 pipelineLogger("Phase5A: upload retryable failure: TIMEOUT")

@@ -51,6 +51,8 @@ class CapturesApiClient internal constructor(
                 response.statusCode == HttpURLConnection.HTTP_UNAUTHORIZED -> CapturesApiResult.Unauthorized
                 response.statusCode == HTTP_UNPROCESSABLE_ENTITY -> CapturesApiResult.Unprocessable
                 response.statusCode == HttpURLConnection.HTTP_UNAVAILABLE -> CapturesApiResult.ServiceUnavailable
+                response.statusCode in 500..599 ->
+                    CapturesApiResult.RetryableServerError(response.statusCode)
                 else -> CapturesApiResult.OtherHttpError(response.statusCode)
             }
         }

@@ -18,6 +18,7 @@ import com.example.accessibility_service.upload.CaptureInitializationBuffer
 import com.example.accessibility_service.upload.CaptureSubmissionResult
 import com.example.accessibility_service.upload.CaptureQueueBridge
 import com.example.accessibility_service.upload.UploadCoordinator
+import com.example.accessibility_service.upload.PipelineInitializationRetryGate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -48,12 +49,18 @@ object AccessibilityState {
 class CaptureAccessibilityService : AccessibilityService() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-    private val persistentInitializationStarted = AtomicBoolean(false)
     private val persistentLifecycleLock = Any()
     private val captureInitializationBuffer = CaptureInitializationBuffer()
     private var serviceDestroyed = false
     @Volatile private var persistentQueue: PersistentEventQueue? = null
     @Volatile private var captureQueueBridge: CaptureQueueBridge? = null
+    private val persistentInitializationGate by lazy {
+        PipelineInitializationRetryGate(
+            scope = serviceScope,
+            initialize = ::initializePersistentCapturePipeline,
+            pipelineLogger = { message -> Log.i(PHASE5A_TAG, message) },
+        )
+    }
     companion object {
         private val network_man = NetworkSyncManager("http://10.0.2.2:8000")
         private val nodewalker = NodeWalker();
@@ -65,11 +72,16 @@ class CaptureAccessibilityService : AccessibilityService() {
         private val lastSummaryTimeByPackage = mutableMapOf<String, Long>()
         private val lastScreenshotTimeByPackage = mutableMapOf<String, Long>()
         private val screenshotInProgress = AtomicBoolean(false)
+        @Volatile private var activeService: CaptureAccessibilityService? = null
         private val TARGET_APPS = mapOf(
             "com.instagram.android" to "Instagram",
             "com.whatsapp" to "WhatsApp",
             "com.facebook.katana" to "Facebook",
         )
+
+        fun notifyAuthTokenAvailable() {
+            activeService?.captureQueueBridge?.onAuthTokenAvailable()
+        }
 
         private fun eventName(eventType: Int): String {
             return when (eventType) {
@@ -82,8 +94,9 @@ class CaptureAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         AccessibilityState.setRunning(true)
+        activeService = this
         Log.i(TAG, "Capture accessibility service connected")
-        if (persistentInitializationStarted.compareAndSet(false, true)) {
+        if (persistentInitializationGate.tryStart()) {
             initializePersistentCapturePipeline()
         } else {
             captureQueueBridge?.onServiceStarted()
@@ -91,12 +104,15 @@ class CaptureAccessibilityService : AccessibilityService() {
     }
     override fun onUnbind(intent: Intent?) : Boolean {
         AccessibilityState.setRunning(false)
+        if (activeService === this) activeService = null
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
         // Catch-all for when the service is destroyed
         AccessibilityState.setRunning(false)
+        if (activeService === this) activeService = null
+        persistentInitializationGate.close()
         val (bridge, queue) = synchronized(persistentLifecycleLock) {
             serviceDestroyed = true
             val resources = captureQueueBridge to persistentQueue
@@ -276,16 +292,21 @@ class CaptureAccessibilityService : AccessibilityService() {
                         Log.w(TAG, "Persistent bridge rejected ${attachResult.rejectedCount} buffered capture(s)")
                     }
                     bridge.onServiceStarted()
+                    persistentInitializationGate.initializationSucceeded()
                     bridge = null
                 }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
                 Log.e(TAG, "Persistent capture pipeline initialization failed: ${error.javaClass.simpleName}")
-                val discardedCaptures = captureInitializationBuffer.close()
-                if (discardedCaptures > 0) {
-                    Log.w(TAG, "Discarded $discardedCaptures volatile capture(s) after initialization failure")
+                synchronized(persistentLifecycleLock) {
+                    if (captureQueueBridge === bridge) captureQueueBridge = null
+                    if (openedQueue == null && persistentQueue != null) {
+                        openedQueue = persistentQueue
+                        persistentQueue = null
+                    }
                 }
+                persistentInitializationGate.initializationFailed()
             } finally {
                 withContext(NonCancellable) {
                     bridge?.close()

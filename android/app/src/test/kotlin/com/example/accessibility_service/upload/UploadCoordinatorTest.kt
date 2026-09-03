@@ -205,6 +205,7 @@ class UploadCoordinatorTest {
     fun retryableFailuresPreserveQueueAndTokenWithoutAutomaticRetry() = runTest {
         val cases = listOf(
             CapturesApiResult.ServiceUnavailable to RetryableFailureReason.SERVICE_UNAVAILABLE,
+            CapturesApiResult.RetryableServerError(500) to RetryableFailureReason.SERVER_ERROR,
             CapturesApiResult.Timeout to RetryableFailureReason.TIMEOUT,
             CapturesApiResult.NetworkError(IllegalStateException("offline")) to RetryableFailureReason.NETWORK_ERROR,
         )

@@ -60,6 +60,7 @@ class MainActivity : FlutterActivity(){
                             lifecycleScope.launch {
                                 try {
                                     val accepted = nativeTokenStore.synchronizeExistingToken(token)
+                                    if (accepted) CaptureAccessibilityService.notifyAuthTokenAvailable()
                                     result.success(accepted)
                                 } catch (e: Exception) {
                                     result.error(
@@ -80,6 +81,7 @@ class MainActivity : FlutterActivity(){
                             lifecycleScope.launch {
                                 try {
                                     nativeTokenStore.installFreshToken(token)
+                                    CaptureAccessibilityService.notifyAuthTokenAvailable()
                                 } catch (e: Exception) {
                                     result.error(
                                         "TOKEN_STORAGE_ERROR",

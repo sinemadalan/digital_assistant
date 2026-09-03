@@ -24,6 +24,8 @@ sealed interface CapturesApiResult {
 
     data object ServiceUnavailable : CapturesApiResult
 
+    data class RetryableServerError(val statusCode: Int) : CapturesApiResult
+
     data class OtherHttpError(val statusCode: Int) : CapturesApiResult
 
     data object Timeout : CapturesApiResult

@@ -35,6 +35,8 @@ internal class CaptureQueueBridge(
 
     private val commands = Channel<Command>(Channel.UNLIMITED)
     private var flushJob: Job? = null
+    private var retryJob: Job? = null
+    private var retryAttempt = 0
     private var batchSuppressedUntilFlush = false
     private val ingestionJob = scope.launch {
         for (command in commands) {
@@ -42,6 +44,8 @@ internal class CaptureQueueBridge(
                 is Command.Enqueue -> processEnqueue(command)
                 Command.ServiceStarted -> processServiceStart()
                 Command.FlushExpired -> processUpload(TriggerSource.FLUSH)
+                Command.RetryExpired -> processUpload(TriggerSource.RETRY)
+                Command.AuthTokenAvailable -> processAuthTokenAvailable()
             }
         }
     }
@@ -53,9 +57,13 @@ internal class CaptureQueueBridge(
 
     fun onServiceStarted(): Boolean = commands.trySend(Command.ServiceStarted).isSuccess
 
+    fun onAuthTokenAvailable(): Boolean = commands.trySend(Command.AuthTokenAvailable).isSuccess
+
     fun close() {
         flushJob?.cancel()
         flushJob = null
+        retryJob?.cancel()
+        retryJob = null
         commands.close()
         ingestionJob.cancel()
     }
@@ -99,7 +107,7 @@ internal class CaptureQueueBridge(
                     )
                     cancelFlush()
                     processUpload(TriggerSource.BATCH)
-                } else {
+                } else if (!batchSuppressedUntilFlush) {
                     scheduleFlushIfNeeded()
                 }
             }
@@ -123,6 +131,14 @@ internal class CaptureQueueBridge(
         }
     }
 
+    private suspend fun processAuthTokenAvailable() {
+        val pending = readPendingCount() ?: return
+        if (pending > 0) {
+            pipelineLogger("Phase5A: upload trigger=REAUTH, pending=$pending")
+            processUpload(TriggerSource.REAUTH)
+        }
+    }
+
     private suspend fun processUpload(source: TriggerSource) {
         if (source == TriggerSource.FLUSH) batchSuppressedUntilFlush = false
         if (source != TriggerSource.FLUSH) cancelFlush()
@@ -139,23 +155,41 @@ internal class CaptureQueueBridge(
             return
         }
 
-        val pending = try {
-            queue.currentPhysicalRecordCount()
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Exception) {
-            diagnosticLogger("Persistent capture count read failed: ${error.javaClass.simpleName}")
-            return
-        }
+        val pending = readPendingCount() ?: return
         if (outcome is UploadOutcome.Uploaded) {
             pipelineLogger(
                 "Phase5A: acknowledged=${outcome.accepted + outcome.skipped}, remaining=$pending",
             )
+            resetRetryBackoffAfterSuccess()
         }
         if (pending == 0 || outcome is UploadOutcome.QueueEmpty) {
             batchSuppressedUntilFlush = false
             cancelFlush()
+            cancelRetry(resetBackoff = true)
             return
+        }
+
+
+        when (outcome) {
+            is UploadOutcome.Uploaded -> Unit
+            is UploadOutcome.RetryableFailure -> {
+                cancelFlush()
+                batchSuppressedUntilFlush = true
+                scheduleRetryIfNeeded()
+                return
+            }
+            UploadOutcome.TokenRevoked,
+            UploadOutcome.NoValidToken,
+            is UploadOutcome.InvalidResponse,
+            is UploadOutcome.OtherHttpFailure,
+            is UploadOutcome.InvalidRequest,
+            -> {
+                cancelFlush()
+                cancelRetry(resetBackoff = false)
+                batchSuppressedUntilFlush = true
+                return
+            }
+            else -> Unit
         }
 
         val queueProgressed = outcome is UploadOutcome.Uploaded ||
@@ -168,6 +202,8 @@ internal class CaptureQueueBridge(
         val shouldSchedule = when (source) {
             TriggerSource.BATCH,
             TriggerSource.STARTUP,
+            TriggerSource.REAUTH,
+            TriggerSource.RETRY,
             -> true
             TriggerSource.FLUSH -> outcome is UploadOutcome.Uploaded ||
                 outcome is UploadOutcome.BatchDiscardedUnprocessable ||
@@ -193,13 +229,57 @@ internal class CaptureQueueBridge(
         flushJob = null
     }
 
+    private fun scheduleRetryIfNeeded() {
+        if (retryJob?.isActive == true) return
+        val delaySeconds = retryDelaySeconds(retryAttempt)
+        retryAttempt += 1
+        pipelineLogger("Phase5A: retry scheduled in ${delaySeconds}s")
+        retryJob = scope.launch {
+            delayMillis(delaySeconds * 1_000L)
+            retryJob = null
+            pipelineLogger("Phase5A: upload trigger=RETRY")
+            commands.send(Command.RetryExpired)
+        }
+    }
+
+    private fun resetRetryBackoffAfterSuccess() {
+        if (retryAttempt == 0 && retryJob?.isActive != true) return
+        cancelRetry(resetBackoff = true)
+        pipelineLogger("Phase5A: retry backoff reset after success")
+    }
+
+    private fun cancelRetry(resetBackoff: Boolean) {
+        retryJob?.cancel()
+        retryJob = null
+        if (resetBackoff) retryAttempt = 0
+    }
+
+    private suspend fun readPendingCount(): Int? = try {
+        queue.currentPhysicalRecordCount()
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Exception) {
+        diagnosticLogger("Persistent capture count read failed: ${error.javaClass.simpleName}")
+        null
+    }
+
+    private fun retryDelaySeconds(attempt: Int): Long = when (attempt) {
+        0 -> 20L
+        1 -> 40L
+        2 -> 80L
+        3 -> 160L
+        else -> 300L
+    }
+
     private sealed interface Command {
         data class Enqueue(val capture: QueuedCapture, val afterPersistence: () -> Unit) : Command
         data object ServiceStarted : Command
         data object FlushExpired : Command
+        data object RetryExpired : Command
+        data object AuthTokenAvailable : Command
     }
 
-    private enum class TriggerSource { BATCH, FLUSH, STARTUP }
+    private enum class TriggerSource { BATCH, FLUSH, STARTUP, RETRY, REAUTH }
 }
 
 internal interface CaptureQueue {

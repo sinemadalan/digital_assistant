@@ -3,6 +3,7 @@ package com.example.accessibility_service.upload
 import com.example.accessibility_service.persistence.EnqueueResult
 import com.example.accessibility_service.persistence.QueuedCapture
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -83,7 +84,7 @@ class CaptureQueueBridgeTest {
     }
 
     @Test
-    fun failedBatchDoesNotStormAndANewEventCanRetryAfterTheOneShotFlush() = runTest {
+    fun noTokenDoesNotStormAndWaitsForReauthSignal() = runTest {
         val queue = FakeCaptureQueue()
         val uploader = FakeCaptureUploader(config = UploadRuntimeConfig(2, 5)) { UploadOutcome.NoValidToken }
         val bridge = bridge(queue, uploader)
@@ -97,11 +98,14 @@ class CaptureQueueBridgeTest {
 
         advanceTimeBy(5_000)
         runCurrent()
-        assertEquals(2, uploader.calls)
+        assertEquals(1, uploader.calls)
 
         bridge.enqueue(capture("E"))
         runCurrent()
-        assertEquals(3, uploader.calls)
+        assertEquals(1, uploader.calls)
+        bridge.onAuthTokenAvailable()
+        runCurrent()
+        assertEquals(2, uploader.calls)
         bridge.close()
     }
 
@@ -128,7 +132,7 @@ class CaptureQueueBridgeTest {
     }
 
     @Test
-    fun aNewScheduleUsesUpdatedFlushSeconds() = runTest {
+    fun noTokenSuppressesNewFlushSchedulesUntilReauth() = runTest {
         val queue = FakeCaptureQueue()
         val uploader = FakeCaptureUploader(config = UploadRuntimeConfig(30, 20)) { UploadOutcome.NoValidToken }
         val bridge = bridge(queue, uploader)
@@ -145,7 +149,7 @@ class CaptureQueueBridgeTest {
         assertEquals(1, uploader.calls)
         advanceTimeBy(1)
         runCurrent()
-        assertEquals(2, uploader.calls)
+        assertEquals(1, uploader.calls)
         bridge.close()
     }
 
@@ -184,15 +188,150 @@ class CaptureQueueBridgeTest {
         assertEquals(0, uploader.calls)
     }
 
+    @Test
+    fun unauthorizedAndNoTokenDoNotScheduleRetry() = runTest {
+        for (outcome in listOf(UploadOutcome.TokenRevoked, UploadOutcome.NoValidToken)) {
+            val queue = FakeCaptureQueue().apply { recordCount = 1 }
+            val uploader = FakeCaptureUploader { outcome }
+            val bridge = bridge(queue, uploader)
+
+            bridge.onServiceStarted()
+            runCurrent()
+            advanceTimeBy(600_000)
+            runCurrent()
+
+            assertEquals(1, uploader.calls)
+            assertEquals(1, queue.recordCount)
+            bridge.close()
+        }
+    }
+
+    @Test
+    fun reauthUploadsPendingQueueAndAcknowledgesOnSuccess() = runTest {
+        val pipelineLogs = mutableListOf<String>()
+        val queue = FakeCaptureQueue().apply { recordCount = 1 }
+        val uploader = FakeCaptureUploader {
+            queue.recordCount = 0
+            UploadOutcome.Uploaded(
+                1,
+                0,
+                com.example.accessibility_service.persistence.AcknowledgeResult.FullyAcknowledged,
+            )
+        }
+        val bridge = bridge(queue, uploader, pipelineLogs = pipelineLogs)
+
+        bridge.onAuthTokenAvailable()
+        runCurrent()
+
+        assertEquals(1, uploader.calls)
+        assertEquals(0, queue.recordCount)
+        assertTrue(pipelineLogs.contains("Phase5A: upload trigger=REAUTH, pending=1"))
+        bridge.close()
+    }
+
+    @Test
+    fun retryableFailureUsesBackoffAndSuccessResetsIt() = runTest {
+        val pipelineLogs = mutableListOf<String>()
+        val queue = FakeCaptureQueue().apply { recordCount = 1 }
+        val outcomes = ArrayDeque<UploadOutcome>().apply {
+            add(UploadOutcome.RetryableFailure(RetryableFailureReason.NETWORK_ERROR))
+            add(UploadOutcome.RetryableFailure(RetryableFailureReason.SERVICE_UNAVAILABLE))
+            add(
+                UploadOutcome.Uploaded(
+                    1,
+                    0,
+                    com.example.accessibility_service.persistence.AcknowledgeResult.FullyAcknowledged,
+                ),
+            )
+        }
+        val uploader = FakeCaptureUploader {
+            outcomes.removeFirst().also {
+                if (it is UploadOutcome.Uploaded) queue.recordCount = 0
+            }
+        }
+        val bridge = bridge(queue, uploader, pipelineLogs = pipelineLogs)
+
+        bridge.onServiceStarted()
+        runCurrent()
+        assertTrue(pipelineLogs.contains("Phase5A: retry scheduled in 20s"))
+        advanceTimeBy(20_000)
+        runCurrent()
+        assertTrue(pipelineLogs.contains("Phase5A: retry scheduled in 40s"))
+        advanceTimeBy(40_000)
+        runCurrent()
+
+        assertEquals(3, uploader.calls)
+        assertEquals(0, queue.recordCount)
+        assertTrue(pipelineLogs.contains("Phase5A: retry backoff reset after success"))
+        bridge.close()
+    }
+
+    @Test
+    fun repeatedTriggersDoNotCreateMultipleRetryTimers() = runTest {
+        val queue = FakeCaptureQueue().apply { recordCount = 1 }
+        val uploader = FakeCaptureUploader {
+            UploadOutcome.RetryableFailure(RetryableFailureReason.NETWORK_ERROR)
+        }
+        val bridge = bridge(queue, uploader)
+
+        bridge.onServiceStarted()
+        bridge.onServiceStarted()
+        runCurrent()
+        assertEquals(2, uploader.calls)
+        advanceTimeBy(20_000)
+        runCurrent()
+
+        assertEquals(3, uploader.calls)
+        bridge.close()
+    }
+
+    @Test
+    fun retryFlushAndBatchTriggersRemainSerialized() = runTest {
+        val queue = FakeCaptureQueue().apply { recordCount = 1 }
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val uploader = object : CaptureUploader {
+            override val runtimeConfig = UploadRuntimeConfig(batchSize = 2, flushSeconds = 1)
+            var calls = 0
+            var active = 0
+            var maxActive = 0
+
+            override suspend fun requestUpload(): UploadOutcome {
+                calls += 1
+                active += 1
+                maxActive = maxOf(maxActive, active)
+                entered.complete(Unit)
+                release.await()
+                active -= 1
+                return UploadOutcome.NoValidToken
+            }
+        }
+        val bridge = CaptureQueueBridge(this, queue, uploader, {})
+
+        bridge.onServiceStarted()
+        entered.await()
+        bridge.enqueue(capture("A"))
+        bridge.onAuthTokenAvailable()
+        advanceTimeBy(1_000)
+        release.complete(Unit)
+        runCurrent()
+
+        assertEquals(1, uploader.maxActive)
+        assertTrue(uploader.calls >= 2)
+        bridge.close()
+    }
+
     private fun TestScope.bridge(
         queue: FakeCaptureQueue,
         uploader: FakeCaptureUploader = FakeCaptureUploader(),
         logs: MutableList<String> = mutableListOf(),
+        pipelineLogs: MutableList<String> = mutableListOf(),
     ) = CaptureQueueBridge(
         scope = this,
         queue = queue,
         uploader = uploader,
         diagnosticLogger = logs::add,
+        pipelineLogger = pipelineLogs::add,
     )
 
     private fun capture(name: String) = QueuedCapture(

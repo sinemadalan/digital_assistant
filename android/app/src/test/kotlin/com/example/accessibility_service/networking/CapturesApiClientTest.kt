@@ -40,7 +40,8 @@ class CapturesApiClientTest {
         assertTrue(resultFor(401) is CapturesApiResult.Unauthorized)
         assertTrue(resultFor(422) is CapturesApiResult.Unprocessable)
         assertTrue(resultFor(503) is CapturesApiResult.ServiceUnavailable)
-        assertEquals(CapturesApiResult.OtherHttpError(500), resultFor(500))
+        assertEquals(CapturesApiResult.RetryableServerError(500), resultFor(500))
+        assertEquals(CapturesApiResult.RetryableServerError(599), resultFor(599))
         assertEquals(CapturesApiResult.OtherHttpError(302), resultFor(302))
     }
 
