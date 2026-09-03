@@ -50,10 +50,8 @@ internal class CaptureQueueBridge(
         }
     }
 
-    override fun enqueue(capture: QueuedCapture, afterPersistence: () -> Unit): Boolean =
-        commands.trySend(Command.Enqueue(capture, afterPersistence)).isSuccess
-
-    fun enqueue(capture: QueuedCapture): Boolean = enqueue(capture) {}
+    override fun enqueue(capture: QueuedCapture): Boolean =
+        commands.trySend(Command.Enqueue(capture)).isSuccess
 
     fun onServiceStarted(): Boolean = commands.trySend(Command.ServiceStarted).isSuccess
 
@@ -92,11 +90,6 @@ internal class CaptureQueueBridge(
                 )
                 if (result.droppedOldestCount > 0) {
                     diagnosticLogger("Persistent capture queue dropped ${result.droppedOldestCount} oldest record(s)")
-                }
-                try {
-                    command.afterPersistence()
-                } catch (error: Exception) {
-                    diagnosticLogger("Legacy capture dispatch failed: ${error.javaClass.simpleName}")
                 }
                 if (result.pendingPhysicalRecordCount >= uploader.runtimeConfig.batchSize &&
                     !batchSuppressedUntilFlush
@@ -272,7 +265,7 @@ internal class CaptureQueueBridge(
     }
 
     private sealed interface Command {
-        data class Enqueue(val capture: QueuedCapture, val afterPersistence: () -> Unit) : Command
+        data class Enqueue(val capture: QueuedCapture) : Command
         data object ServiceStarted : Command
         data object FlushExpired : Command
         data object RetryExpired : Command

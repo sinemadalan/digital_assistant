@@ -15,7 +15,7 @@ internal data class CaptureBufferAttachResult(
 )
 
 internal fun interface CaptureSink {
-    fun enqueue(capture: QueuedCapture, afterPersistence: () -> Unit): Boolean
+    fun enqueue(capture: QueuedCapture): Boolean
 }
 
 /** Bounded FIFO used only while the persistent capture pipeline is opening. */
@@ -23,7 +23,7 @@ internal class CaptureInitializationBuffer(
     private val capacity: Int = DEFAULT_CAPACITY,
 ) {
     private val lock = Any()
-    private val pending = ArrayDeque<PendingCapture>()
+    private val pending = ArrayDeque<QueuedCapture>()
     private var sink: CaptureSink? = null
     private var terminal = false
 
@@ -31,11 +31,11 @@ internal class CaptureInitializationBuffer(
         require(capacity > 0) { "Initialization buffer capacity must be positive." }
     }
 
-    fun submit(capture: QueuedCapture, afterPersistence: () -> Unit): CaptureSubmissionResult =
+    fun submit(capture: QueuedCapture): CaptureSubmissionResult =
         synchronized(lock) {
             if (terminal) return@synchronized CaptureSubmissionResult.UNAVAILABLE
             sink?.let { readySink ->
-                return@synchronized if (readySink.enqueue(capture, afterPersistence)) {
+                return@synchronized if (readySink.enqueue(capture)) {
                     CaptureSubmissionResult.SUBMITTED
                 } else {
                     CaptureSubmissionResult.UNAVAILABLE
@@ -44,7 +44,7 @@ internal class CaptureInitializationBuffer(
 
             val droppedOldest = pending.size == capacity
             if (droppedOldest) pending.removeFirst()
-            pending.addLast(PendingCapture(capture, afterPersistence))
+            pending.addLast(capture)
             if (droppedOldest) {
                 CaptureSubmissionResult.BUFFERED_AFTER_DROPPING_OLDEST
             } else {
@@ -59,7 +59,7 @@ internal class CaptureInitializationBuffer(
         var rejected = 0
         while (pending.isNotEmpty()) {
             val capture = pending.removeFirst()
-            if (readySink.enqueue(capture.capture, capture.afterPersistence)) submitted += 1 else rejected += 1
+            if (readySink.enqueue(capture)) submitted += 1 else rejected += 1
         }
         CaptureBufferAttachResult(submitted, rejected)
     }
@@ -74,11 +74,6 @@ internal class CaptureInitializationBuffer(
     }
 
     internal fun bufferedCount(): Int = synchronized(lock) { pending.size }
-
-    private data class PendingCapture(
-        val capture: QueuedCapture,
-        val afterPersistence: () -> Unit,
-    )
 
     companion object {
         const val DEFAULT_CAPACITY = 32

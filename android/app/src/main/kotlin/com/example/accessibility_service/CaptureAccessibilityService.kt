@@ -176,15 +176,7 @@ class CaptureAccessibilityService : AccessibilityService() {
                     event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
                 capturedAt = capturedAt,
             )
-            val submission = captureInitializationBuffer.submit(queuedCapture) {
-                // The legacy endpoint remains transitional, but never runs before queue persistence.
-                network_man.sendCaptureSummary(
-                    packageName = packageName,
-                    appName = appName,
-                    eventType = capturedEventName,
-                    screenSummary = screenSummary,
-                )
-            }
+            val submission = captureInitializationBuffer.submit(queuedCapture)
             when (submission) {
                 CaptureSubmissionResult.BUFFERED_AFTER_DROPPING_OLDEST ->
                     Log.w(TAG, "Capture initialization buffer was full; its oldest capture was discarded")

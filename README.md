@@ -3,7 +3,7 @@
 
 Flutter arayüzü, yerel Android `AccessibilityService` uygulaması ve FastAPI
 sunucusundan oluşan bir ekran bağlamı toplama projesidir. Uygulama,
-izin verilen Android erişilebilirlik servisi üzerinden belirli uygulamalardaki arayüz ağacını okur, sınırlı bir metin/düğüm özeti çıkarır ve geliştirme bilgisayarında çalışan sunucuya gönderir. Ayrıca belirli aralıklarla ekran görüntüsü alıp JPEG olarak sunucuya yükleyebilir.
+izin verilen Android erişilebilirlik servisi üzerinden belirli uygulamalardaki arayüz ağacını okur, sınırlı bir metin/düğüm özeti çıkarır ve kalıcı queue üzerinden production API'ye gönderir. Ayrıca belirli aralıklarla ekran görüntüsü alıp JPEG olarak geliştirme bilgisayarındaki sunucuya yükleyebilir.
 
 > [!WARNING]
 > Bu proje ekrandaki metinleri, erişilebilirlik açıklamalarını ve ekran görüntülerini toplayabilir. Yalnızca sahibi olduğunuz cihazlarda, açık kullanıcı bilgisi ve onayıyla kullanın. Mevcut sunucu kimlik doğrulama, TLS, kullanıcı izolasyonu veya üretim ortamı güvenliği sağlamaz.
@@ -15,7 +15,7 @@ izin verilen Android erişilebilirlik servisi üzerinden belirli uygulamalardaki
 - İzni kaldırmadan veri toplamayı duraklatma ve devam ettirme
 - WhatsApp, Instagram ve Facebook için pencere değişikliklerini izleme
 - Erişilebilirlik ağacından metin, içerik açıklaması ve düğüm bilgisi çıkarma
-- Metin özetlerini JSON olarak FastAPI sunucusuna gönderme
+- Metin özetlerini kalıcı queue üzerinden production `/v1/captures` API'sine gönderme
 - Ekran görüntülerini JPEG olarak sıkıştırıp sunucuya yükleme
 - Yakalanan kayıtları listeleyen ve uygulama bazında özetleyen API uçları
 - Hassas çalışma zamanı dosyalarını Git dışında tutan allowlist tabanlı
@@ -27,9 +27,10 @@ izin verilen Android erişilebilirlik servisi üzerinden belirli uygulamalardaki
 flowchart LR
     A[WhatsApp / Instagram / Facebook] -->|Accessibility event| B[Android AccessibilityService]
     B --> C[NodeWalker]
-    C -->|Metin ve düğüm özeti| D[POST /capture]
+    C -->|Metin ve düğüm özeti| D[PersistentEventQueue]
+    D --> I[UploadCoordinator]
+    I --> J[POST /v1/captures]
     B -->|JPEG screenshot| E[POST /image_capture]
-    D --> F[server/captures.jsonl]
     E --> G[server/saved_screenshots/]
     H[Flutter kontrol paneli] <-->|MethodChannel / EventChannel| B
 ```
@@ -163,14 +164,14 @@ Başarılı gönderimlerde Flutter terminalinde aşağıdakilere benzer kayıtla
 görünür:
 
 ```text
-Capture POST response: 200
+Phase5A: /v1/captures response status=200
 Screenshot compressed: ... bytes
 Success send ss 200
 ```
 
 ## Sunucu adresi
 
-Android kodunda geliştirme sunucusu şu adresle tanımlıdır:
+Android kodunda screenshot geliştirme sunucusu şu adresle tanımlıdır:
 
 ```kotlin
 NetworkSyncManager("http://10.0.2.2:8000")
@@ -192,7 +193,7 @@ FastAPI otomatik belgeleri sunucu çalışırken şu adreslerde bulunur:
 | Metot | Yol | Açıklama |
 | --- | --- | --- |
 | `GET` | `/health` | Sunucu sağlık kontrolü |
-| `POST` | `/capture` | Metin ve erişilebilirlik düğüm özetini alır |
+| `POST` | `/capture` | Yalnızca bağımsız/manual legacy geliştirme kullanımı için özet alır; Android uygulaması çağırmaz |
 | `POST` | `/image_capture` | JPEG screenshot alır; `X-User-Id` zorunludur |
 | `GET` | `/captures?limit=20` | Son yakalama kayıtlarını listeler |
 | `GET` | `/captures/instagram/summary` | Instagram kayıt özetini döndürür |

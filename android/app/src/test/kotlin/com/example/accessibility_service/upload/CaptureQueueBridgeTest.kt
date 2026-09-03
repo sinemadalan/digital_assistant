@@ -9,39 +9,36 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.TestScope
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CaptureQueueBridgeTest {
     @Test
-    fun enqueueIsFifoAndPersistencePrecedesLegacyDispatch() = runTest {
+    fun enqueueIsFifoAndOnlyPersistsCaptures() = runTest {
         val operations = mutableListOf<String>()
         val queue = FakeCaptureQueue { capture -> operations += "queue:${capture.appName}" }
         val bridge = bridge(queue)
 
-        bridge.enqueue(capture("A")) { operations += "network:A" }
-        bridge.enqueue(capture("B")) { operations += "network:B" }
+        bridge.enqueue(capture("A"))
+        bridge.enqueue(capture("B"))
         runCurrent()
 
         assertEquals(listOf("A", "B"), queue.captures.map { it.appName })
-        assertEquals(listOf("queue:A", "network:A", "queue:B", "network:B"), operations)
+        assertEquals(listOf("queue:A", "queue:B"), operations)
         bridge.close()
     }
 
     @Test
-    fun enqueueFailureIsContainedAndDoesNotInvokeNetworkOrUpload() = runTest {
+    fun enqueueFailureIsContainedAndDoesNotInvokeUpload() = runTest {
         val logs = mutableListOf<String>()
         val uploader = FakeCaptureUploader()
         val queue = FakeCaptureQueue().apply { enqueueFailure = IllegalStateException("disk") }
-        var legacyCalled = false
         val bridge = bridge(queue, uploader, logs)
 
-        bridge.enqueue(capture("A")) { legacyCalled = true }
+        bridge.enqueue(capture("A"))
         runCurrent()
 
-        assertFalse(legacyCalled)
         assertEquals(0, uploader.calls)
         assertTrue(logs.single().contains("IllegalStateException"))
         bridge.close()

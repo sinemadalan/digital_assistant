@@ -2,7 +2,6 @@ package com.example.accessibility_service.upload
 
 import com.example.accessibility_service.persistence.QueuedCapture
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -12,12 +11,12 @@ class CaptureInitializationBufferTest {
         val buffer = CaptureInitializationBuffer(capacity = 4)
         val sink = RecordingCaptureSink()
 
-        assertEquals(CaptureSubmissionResult.BUFFERED, buffer.submit(capture("A")) {})
-        assertEquals(CaptureSubmissionResult.BUFFERED, buffer.submit(capture("B")) {})
+        assertEquals(CaptureSubmissionResult.BUFFERED, buffer.submit(capture("A")))
+        assertEquals(CaptureSubmissionResult.BUFFERED, buffer.submit(capture("B")))
         assertTrue(sink.names.isEmpty())
 
         assertEquals(CaptureBufferAttachResult(2, 0), buffer.attach(sink))
-        assertEquals(CaptureSubmissionResult.SUBMITTED, buffer.submit(capture("C")) {})
+        assertEquals(CaptureSubmissionResult.SUBMITTED, buffer.submit(capture("C")))
 
         assertEquals(listOf("A", "B", "C"), sink.names)
         assertEquals(0, buffer.bufferedCount())
@@ -28,11 +27,11 @@ class CaptureInitializationBufferTest {
         val buffer = CaptureInitializationBuffer(capacity = 2)
         val sink = RecordingCaptureSink()
 
-        buffer.submit(capture("A")) {}
-        buffer.submit(capture("B")) {}
+        buffer.submit(capture("A"))
+        buffer.submit(capture("B"))
         assertEquals(
             CaptureSubmissionResult.BUFFERED_AFTER_DROPPING_OLDEST,
-            buffer.submit(capture("C")) {},
+            buffer.submit(capture("C")),
         )
 
         assertEquals(2, buffer.bufferedCount())
@@ -43,12 +42,12 @@ class CaptureInitializationBufferTest {
     @Test
     fun initializationFailureOrDestroyDiscardsVolatileCapturesAndRejectsFutureOnes() {
         val buffer = CaptureInitializationBuffer(capacity = 2)
-        buffer.submit(capture("A")) {}
-        buffer.submit(capture("B")) {}
+        buffer.submit(capture("A"))
+        buffer.submit(capture("B"))
 
         assertEquals(2, buffer.close())
         assertEquals(0, buffer.bufferedCount())
-        assertEquals(CaptureSubmissionResult.UNAVAILABLE, buffer.submit(capture("C")) {})
+        assertEquals(CaptureSubmissionResult.UNAVAILABLE, buffer.submit(capture("C")))
         assertEquals(CaptureBufferAttachResult(0, 0), buffer.attach(RecordingCaptureSink()))
     }
 
@@ -58,22 +57,10 @@ class CaptureInitializationBufferTest {
         val sink = RecordingCaptureSink()
         buffer.attach(sink)
 
-        assertEquals(CaptureSubmissionResult.SUBMITTED, buffer.submit(capture("A")) {})
+        assertEquals(CaptureSubmissionResult.SUBMITTED, buffer.submit(capture("A")))
 
         assertEquals(listOf("A"), sink.names)
         assertEquals(0, buffer.bufferedCount())
-    }
-
-    @Test
-    fun legacyCallbackIsDeferredAlongWithCapture() {
-        val buffer = CaptureInitializationBuffer(capacity = 2)
-        var legacyCalled = false
-        buffer.submit(capture("A")) { legacyCalled = true }
-        assertFalse(legacyCalled)
-
-        buffer.attach(RecordingCaptureSink(invokeCallbacks = true))
-
-        assertTrue(legacyCalled)
     }
 
     private fun capture(name: String) = QueuedCapture(
@@ -88,14 +75,11 @@ class CaptureInitializationBufferTest {
     )
 }
 
-private class RecordingCaptureSink(
-    private val invokeCallbacks: Boolean = false,
-) : CaptureSink {
+private class RecordingCaptureSink : CaptureSink {
     val names = mutableListOf<String>()
 
-    override fun enqueue(capture: QueuedCapture, afterPersistence: () -> Unit): Boolean {
+    override fun enqueue(capture: QueuedCapture): Boolean {
         names += capture.appName
-        if (invokeCallbacks) afterPersistence()
         return true
     }
 }
