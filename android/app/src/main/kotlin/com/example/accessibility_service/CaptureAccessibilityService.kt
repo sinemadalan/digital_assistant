@@ -8,7 +8,6 @@ import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import androidx.annotation.RequiresApi
-import com.example.accessibility_service.Util.NetworkSyncManager
 import com.example.accessibility_service.Util.NodeWalker
 import com.example.accessibility_service.Util.ScreenSummary
 import com.example.accessibility_service.networking.CapturesApiClient
@@ -25,13 +24,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
+import com.example.accessibility_service.screenshot.PersistentScreenshotQueue
+import com.example.accessibility_service.screenshot.ScreenshotUploadCoordinator
+import com.example.accessibility_service.screenshot.MultipartScreenshotApiClient
 import java.time.OffsetDateTime
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.ConcurrentHashMap
 
 object AccessibilityState {
     private val _isServiceRunning = MutableStateFlow(false)
@@ -54,6 +58,9 @@ class CaptureAccessibilityService : AccessibilityService() {
     private var serviceDestroyed = false
     @Volatile private var persistentQueue: PersistentEventQueue? = null
     @Volatile private var captureQueueBridge: CaptureQueueBridge? = null
+    @Volatile private var screenshotQueue: PersistentScreenshotQueue? = null
+    @Volatile private var screenshotUploadCoordinator: ScreenshotUploadCoordinator? = null
+    private val debounceJobs = ConcurrentHashMap<String, Job>()
     private val persistentInitializationGate by lazy {
         PipelineInitializationRetryGate(
             scope = serviceScope,
@@ -62,13 +69,12 @@ class CaptureAccessibilityService : AccessibilityService() {
         )
     }
     companion object {
-        private val network_man = NetworkSyncManager("http://10.0.2.2:8000")
         private val nodewalker = NodeWalker();
         private const val TAG = "CaptureA11yService"
         private const val PHASE5A_TAG = "Phase5A"
         private const val SUMMARY_THROTTLE_MS = 5_000L
-        private const val SCREENSHOT_THROTTLE_MS = 60_000L
-        private const val SCREENSHOT_JPEG_QUALITY = 80
+        private const val SCREENSHOT_THROTTLE_MS = 5_000L
+        private const val SCREENSHOT_DEBOUNCE_MS = 1_000L
         private val lastSummaryTimeByPackage = mutableMapOf<String, Long>()
         private val lastScreenshotTimeByPackage = mutableMapOf<String, Long>()
         private val screenshotInProgress = AtomicBoolean(false)
@@ -118,8 +124,12 @@ class CaptureAccessibilityService : AccessibilityService() {
             val resources = captureQueueBridge to persistentQueue
             captureQueueBridge = null
             persistentQueue = null
+            screenshotQueue = null
+            screenshotUploadCoordinator = null
             resources
         }
+        debounceJobs.values.forEach { it.cancel() }
+        debounceJobs.clear()
         val discardedCaptures = captureInitializationBuffer.close()
         if (discardedCaptures > 0) {
             Log.w(TAG, "Discarded $discardedCaptures volatile capture(s) during service teardown")
@@ -188,57 +198,45 @@ class CaptureAccessibilityService : AccessibilityService() {
             }
         }
 
-        if (!shouldSendScreenshot || !screenshotInProgress.compareAndSet(false, true)) return
-        lastScreenshotTimeByPackage[packageName] = now
-        takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object: TakeScreenshotCallback {
-            override fun onFailure(p0: Int) {
-                screenshotInProgress.set(false)
-                try {
-                    //adb shell settings put global hidden_api_policy 1
-                    //adb shell settings delete global hidden_api_policy
-                    val field = AccessibilityService::class.java.getDeclaredField("ACCESSIBILITY_TAKE_SCREENSHOT_REQUEST_INTERVAL_TIMES_MS")
-                    field.setAccessible(true); // Bypass visibility modifiers
-                    val intervalMs = field.getInt(null) // It is a static primitive int
-                    Log.d("ScreenshotInterval", "The exact system interval is: $intervalMs ms")
-
-                } catch (e: Exception) {
-                    Log.e("ScreenshotInterval", "Failed to read interval via reflection", e)
-                }
-                Log.e(TAG, "Error taking screenshot $p0")
-            }
-
-            override fun onSuccess(screenshotResult: ScreenshotResult) {
-                Log.d(TAG, "Success taking screenshot")
-                serviceScope.launch {
-                    var bitmap: Bitmap? = null
-                    try {
-                        Log.d(TAG, "Processing image")
-                        val screenshotBitmap = Bitmap.wrapHardwareBuffer(
-                            screenshotResult.hardwareBuffer,
-                            screenshotResult.colorSpace,
-                        ) ?: throw IllegalStateException("Could not create bitmap from screenshot")
-                        bitmap = screenshotBitmap
-
-                        val imageBytes = ByteArrayOutputStream().use { output ->
-                            check(screenshotBitmap.compress(Bitmap.CompressFormat.JPEG, SCREENSHOT_JPEG_QUALITY, output)) {
-                                "Could not compress screenshot"
-                            }
-                            output.toByteArray()
-                        }
-                        Log.d(TAG, "Screenshot compressed: ${imageBytes.size} bytes")
-                        network_man.sendScreenshot(imageBytes, "user_0")
-                    } catch (error: Exception) {
-                        Log.e(TAG, "Screenshot processing failed: ${error.message}", error)
-                    } finally {
-                        bitmap?.recycle()
-                        screenshotResult.hardwareBuffer.close()
+        if (shouldSendScreenshot) {
+            debounceJobs[packageName]?.cancel()
+            debounceJobs[packageName] = serviceScope.launch {
+                delay(SCREENSHOT_DEBOUNCE_MS)
+                
+                if (!screenshotInProgress.compareAndSet(false, true)) return@launch
+                lastScreenshotTimeByPackage[packageName] = System.currentTimeMillis()
+                
+                takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object: TakeScreenshotCallback {
+                    override fun onFailure(p0: Int) {
                         screenshotInProgress.set(false)
+                        Log.e(TAG, "Error taking screenshot $p0")
                     }
-                }
+
+                    override fun onSuccess(screenshotResult: ScreenshotResult) {
+                        Log.d(TAG, "Success taking screenshot")
+                        serviceScope.launch {
+                            var bitmap: Bitmap? = null
+                            try {
+                                Log.d(TAG, "Processing image")
+                                bitmap = Bitmap.wrapHardwareBuffer(
+                                    screenshotResult.hardwareBuffer,
+                                    screenshotResult.colorSpace,
+                                ) ?: throw IllegalStateException("Could not create bitmap from screenshot")
+
+                                screenshotQueue?.enqueue(bitmap, packageName)
+                                screenshotUploadCoordinator?.requestUpload()
+                            } catch (error: Exception) {
+                                Log.e(TAG, "Screenshot processing failed: ${error.message}", error)
+                            } finally {
+                                bitmap?.recycle()
+                                screenshotResult.hardwareBuffer.close()
+                                screenshotInProgress.set(false)
+                            }
+                        }
+                    }
+                })
             }
-
-        })
-
+        }
     }
 
     override fun onInterrupt() {
@@ -274,6 +272,14 @@ class CaptureAccessibilityService : AccessibilityService() {
                     } else {
                         persistentQueue = openedQueue
                         captureQueueBridge = bridge
+                        
+                        // Initialize screenshot pipeline
+                        screenshotQueue = PersistentScreenshotQueue(applicationContext)
+                        screenshotUploadCoordinator = ScreenshotUploadCoordinator(
+                            tokenStore = NativeTokenStore(applicationContext),
+                            queue = screenshotQueue!!,
+                            apiClient = MultipartScreenshotApiClient()
+                        )
                         true
                     }
                 }
@@ -284,6 +290,7 @@ class CaptureAccessibilityService : AccessibilityService() {
                         Log.w(TAG, "Persistent bridge rejected ${attachResult.rejectedCount} buffered capture(s)")
                     }
                     bridge.onServiceStarted()
+                    screenshotUploadCoordinator?.requestUpload()
                     persistentInitializationGate.initializationSucceeded()
                     bridge = null
                 }
