@@ -30,7 +30,10 @@ interface ScreenshotApiClient {
 class MultipartScreenshotApiClient(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val baseUrl: String = "https://api.152-70-40-87.nip.io",
-    private val endpointPath: String = "/v1/captures/screenshot"
+    private val endpointPath: String = "/v1/captures/screenshot",
+    private val connectionFactory: (URL) -> HttpURLConnection = { url ->
+        url.openConnection() as HttpURLConnection
+    }
 ) : ScreenshotApiClient {
 
     override suspend fun uploadScreenshot(token: String, screenshot: QueuedScreenshot): ScreenshotUploadResult {
@@ -38,7 +41,7 @@ class MultipartScreenshotApiClient(
             val url = URL(baseUrl + endpointPath)
             var connection: HttpURLConnection? = null
             try {
-                connection = url.openConnection() as HttpURLConnection
+                connection = connectionFactory(url)
                 val boundary = "Boundary-${UUID.randomUUID()}"
                 
                 connection.requestMethod = "POST"
