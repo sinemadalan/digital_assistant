@@ -57,7 +57,6 @@ Future<bool> syncTokenToNative(String token) async {
   if (token.trim().isEmpty) {
     return false;
   }
-
   try {
     return await AccessibilityManager.setAuthToken(token);
   } catch (e) {
@@ -174,4 +173,17 @@ Future<EnrollResult> mockEnrollDeviceIfTokenNotExist(
     print('Network or parsing error during enrollment: $e');
     return EnrollResult.networkError;
   }
+}
+
+Future<EnrollResult> skipEnrollWithKeyForDebug(
+  String token,
+  String deviceName,
+) async {
+  if (await checkIfTokenExists()) {
+    return EnrollResult.duplicateEnrollment;
+  }
+  print("Token: $token");
+  await writeTokenIfNotExist(token);
+
+  return EnrollResult.success;
 }
