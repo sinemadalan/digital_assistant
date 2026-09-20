@@ -53,10 +53,16 @@ class ScreenshotUploadCoordinator(
                     logger("Endpoint returned 404 (not implemented yet). Retaining screenshot ${screenshot.id} on disk for ADB inspection and halting uploads")
                     return
                 }
-                is ScreenshotUploadResult.NetworkError,
-                is ScreenshotUploadResult.Timeout,
                 is ScreenshotUploadResult.ServerError -> {
-                    logger("Retryable error uploading screenshot ${screenshot.id}, halting until next trigger")
+                    logger("Retryable ServerError (HTTP ${result.statusCode}) uploading screenshot ${screenshot.id}, halting until next trigger")
+                    return
+                }
+                is ScreenshotUploadResult.NetworkError -> {
+                    logger("Retryable NetworkError (${result.error.message}) uploading screenshot ${screenshot.id}, halting until next trigger")
+                    return
+                }
+                is ScreenshotUploadResult.Timeout -> {
+                    logger("Retryable Timeout error uploading screenshot ${screenshot.id}, halting until next trigger")
                     return
                 }
                 is ScreenshotUploadResult.OtherHttpError -> {
