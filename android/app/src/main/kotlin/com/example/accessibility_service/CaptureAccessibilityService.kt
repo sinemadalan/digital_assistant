@@ -3,6 +3,7 @@ package com.example.accessibility_service
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.os.Build
 import android.util.Log
 import android.view.Display
@@ -35,31 +36,43 @@ import com.example.accessibility_service.screenshot.ScreenshotUploadCoordinator
 import com.example.accessibility_service.screenshot.MultipartScreenshotApiClient
 import java.time.OffsetDateTime
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.ConcurrentHashMap
 
 object AccessibilityState {
     private val _isServiceRunning = MutableStateFlow(false)
     val isServiceRunning: StateFlow<Boolean> = _isServiceRunning
+
     // Tracks if the user hit "Pause" in Flutter UI
     private val _isPaused = MutableStateFlow(false)
     val isPaused: StateFlow<Boolean> = _isPaused
     fun setRunning(isRunning: Boolean) {
         _isServiceRunning.value = isRunning
     }
+
     fun setPaused(pause: Boolean) {
         _isPaused.value = pause
     }
 }
+
 class CaptureAccessibilityService : AccessibilityService() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private val persistentLifecycleLock = Any()
     private val captureInitializationBuffer = CaptureInitializationBuffer()
     private var serviceDestroyed = false
-    @Volatile private var persistentQueue: PersistentEventQueue? = null
-    @Volatile private var captureQueueBridge: CaptureQueueBridge? = null
-    @Volatile private var screenshotQueue: PersistentScreenshotQueue? = null
-    @Volatile private var screenshotUploadCoordinator: ScreenshotUploadCoordinator? = null
+
+    @Volatile
+    private var persistentQueue: PersistentEventQueue? = null
+
+    @Volatile
+    private var captureQueueBridge: CaptureQueueBridge? = null
+
+    @Volatile
+    private var screenshotQueue: PersistentScreenshotQueue? = null
+
+    @Volatile
+    private var screenshotUploadCoordinator: ScreenshotUploadCoordinator? = null
     private val debounceJobs = ConcurrentHashMap<String, Job>()
     private val persistentInitializationGate by lazy {
         PipelineInitializationRetryGate(
@@ -68,17 +81,20 @@ class CaptureAccessibilityService : AccessibilityService() {
             pipelineLogger = { message -> Log.i(PHASE5A_TAG, message) },
         )
     }
+
     companion object {
         private val nodewalker = NodeWalker();
         private const val TAG = "CaptureA11yService"
         private const val PHASE5A_TAG = "Phase5A"
         private const val SUMMARY_THROTTLE_MS = 5_000L
-        private const val SCREENSHOT_THROTTLE_MS = 5_000L
         private const val SCREENSHOT_DEBOUNCE_MS = 1_000L
         private val lastSummaryTimeByPackage = mutableMapOf<String, Long>()
-        private val lastScreenshotTimeByPackage = mutableMapOf<String, Long>()
         private val screenshotInProgress = AtomicBoolean(false)
-        @Volatile private var activeService: CaptureAccessibilityService? = null
+        private val lastEventTimeByPackage = ConcurrentHashMap<String, AtomicLong>()
+        private val isPackageSettled = ConcurrentHashMap<String, Boolean>()
+
+        @Volatile
+        private var activeService: CaptureAccessibilityService? = null
         private val TARGET_APPS = mapOf(
             "com.instagram.android" to "Instagram",
             "com.whatsapp" to "WhatsApp",
@@ -90,13 +106,20 @@ class CaptureAccessibilityService : AccessibilityService() {
         }
 
         private fun eventName(eventType: Int): String {
-            return when (eventType) {
-                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "TYPE_WINDOW_STATE_CHANGED"
-                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> "TYPE_WINDOW_CONTENT_CHANGED"
-                else -> eventType.toString()
+            return try {
+                AccessibilityEvent.eventTypeToString(eventType)
+            } catch (_: Throwable) {
+                when (eventType) {
+                    AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "TYPE_WINDOW_STATE_CHANGED"
+                    AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> "TYPE_WINDOW_CONTENT_CHANGED"
+                    AccessibilityEvent.TYPE_VIEW_SCROLLED -> "TYPE_VIEW_SCROLLED"
+                    AccessibilityEvent.TYPE_VIEW_CLICKED -> "TYPE_VIEW_CLICKED"
+                    else -> "TYPE_$eventType"
+                }
             }
         }
     }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         AccessibilityState.setRunning(true)
@@ -108,7 +131,8 @@ class CaptureAccessibilityService : AccessibilityService() {
             captureQueueBridge?.onServiceStarted()
         }
     }
-    override fun onUnbind(intent: Intent?) : Boolean {
+
+    override fun onUnbind(intent: Intent?): Boolean {
         AccessibilityState.setRunning(false)
         if (activeService === this) activeService = null
         return super.onUnbind(intent)
@@ -155,88 +179,133 @@ class CaptureAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: return
         val appName = TARGET_APPS[packageName] ?: return
+
+        // --- SCREENSHOT LOGIC ---
         val now = System.currentTimeMillis()
-        val capturedAt = OffsetDateTime.now()
-        val capturedEventName = eventName(event.eventType)
+        val lastEventTime = lastEventTimeByPackage.getOrPut(packageName) { AtomicLong(now) }
+        lastEventTime.set(now)
+
+        val activeJob = debounceJobs[packageName]
+        if (activeJob == null || !activeJob.isActive) {
+            // No job running, or it finished. Launch a new one.
+            debounceJobs[packageName] = serviceScope.launch {
+                monitorScreenSettle(packageName, lastEventTime)
+            }
+        } else if (isPackageSettled[packageName] == true) {
+            // Screen was settled (watching video), but now it's moving again.
+            // Cancel the video timer and restart the debounce monitor.
+            activeJob.cancel()
+            debounceJobs[packageName] = serviceScope.launch {
+                monitorScreenSettle(packageName, lastEventTime)
+            }
+        }
+        // If the job is active AND it's NOT settled, we do absolutely nothing!
+        // The active job will naturally wake up, see the updated lastEventTime, and sleep again.
+
+        // --- SUMMARY LOGIC ---
         val lastSummaryTime = lastSummaryTimeByPackage[packageName] ?: 0L
         val shouldSendSummary = now - lastSummaryTime >= SUMMARY_THROTTLE_MS
 
-        val lastScreenshotTime = lastScreenshotTimeByPackage[packageName] ?: 0L
-        val shouldSendScreenshot = now - lastScreenshotTime >= SCREENSHOT_THROTTLE_MS
+        if (!shouldSendSummary) return
 
-        if (!shouldSendSummary && !shouldSendScreenshot) return
+        lastSummaryTimeByPackage[packageName] = now
+        val capturedAt = OffsetDateTime.now()
+        val capturedEventName = eventName(event.eventType)
+
         Log.d(TAG, "Captured event for $appName: $capturedEventName")
 
         val screenSummary = collectScreenSummary()
         Log.d(
             TAG,
             "Captured screen summary: app=$appName, event=$capturedEventName, " +
-                "package=$packageName, nodeCount=${screenSummary.nodeCount}, " +
-                "textCount=${screenSummary.texts.size}"
+                    "package=$packageName, nodeCount=${screenSummary.nodeCount}, " +
+                    "textCount=${screenSummary.texts.size}"
         )
-        if (shouldSendSummary) {
-            lastSummaryTimeByPackage[packageName] = now
-            val queuedCapture = AccessibilityCaptureMapper.map(
-                packageName = packageName,
-                appName = appName,
-                eventType = capturedEventName,
-                screenSummary = screenSummary,
-                isTargetApp = TARGET_APPS.containsKey(packageName),
-                isSupportedEventType = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+
+        val queuedCapture = AccessibilityCaptureMapper.map(
+            packageName = packageName,
+            appName = appName,
+            eventType = capturedEventName,
+            screenSummary = screenSummary,
+            isTargetApp = TARGET_APPS.containsKey(packageName),
+            isSupportedEventType = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
                     event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
-                capturedAt = capturedAt,
-            )
-            val submission = captureInitializationBuffer.submit(queuedCapture)
-            when (submission) {
-                CaptureSubmissionResult.BUFFERED_AFTER_DROPPING_OLDEST ->
-                    Log.w(TAG, "Capture initialization buffer was full; its oldest capture was discarded")
-                CaptureSubmissionResult.UNAVAILABLE ->
-                    Log.w(TAG, "Persistent capture pipeline is unavailable; capture was not submitted")
-                CaptureSubmissionResult.SUBMITTED,
-                CaptureSubmissionResult.BUFFERED,
+            capturedAt = capturedAt,
+        )
+        val submission = captureInitializationBuffer.submit(queuedCapture)
+        when (submission) {
+            CaptureSubmissionResult.BUFFERED_AFTER_DROPPING_OLDEST ->
+                Log.w(TAG, "Capture initialization buffer was full; its oldest capture was discarded")
+
+            CaptureSubmissionResult.UNAVAILABLE ->
+                Log.w(TAG, "Persistent capture pipeline is unavailable; capture was not submitted")
+
+            CaptureSubmissionResult.SUBMITTED,
+            CaptureSubmissionResult.BUFFERED,
                 -> Unit
+        }
+    }
+
+    private suspend fun monitorScreenSettle(packageName: String, lastEventTime: AtomicLong) {
+        isPackageSettled[packageName] = false
+
+        // 1. Debounce Phase (Wait for Screen to Settle)
+        while (true) {
+            val timeSinceLastEvent = System.currentTimeMillis() - lastEventTime.get()
+            if (timeSinceLastEvent >= SCREENSHOT_DEBOUNCE_MS) {
+                break // Screen has settled!
             }
+            delay(SCREENSHOT_DEBOUNCE_MS - timeSinceLastEvent)
         }
 
-        if (shouldSendScreenshot) {
-            debounceJobs[packageName]?.cancel()
-            debounceJobs[packageName] = serviceScope.launch {
-                delay(SCREENSHOT_DEBOUNCE_MS)
-                
-                if (!screenshotInProgress.compareAndSet(false, true)) return@launch
-                lastScreenshotTimeByPackage[packageName] = System.currentTimeMillis()
-                
-                takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object: TakeScreenshotCallback {
-                    override fun onFailure(p0: Int) {
+        // 2. Screen Settled! Take one-shot screenshot.
+        Log.d(TAG, "SCREENSHOT: Screen has settled, taking screenshot")
+        triggerScreenshot(packageName)
+        isPackageSettled[packageName] = true
+
+        // 3. Periodic Video Timer Phase
+        // Keep this modular so it can be easily commented out or disabled if needed.
+        while (true) {
+            delay(60_000L) // 1 minute timer for video watching
+            if (AccessibilityState.isPaused.value) continue
+
+            Log.d(TAG, "SCREENSHOT: Periodic video screenshot triggered for $packageName")
+            triggerScreenshot(packageName)
+        }
+    }
+
+    private fun triggerScreenshot(packageName: String) {
+        if (!screenshotInProgress.compareAndSet(false, true)) return
+
+        takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : TakeScreenshotCallback {
+            override fun onFailure(p0: Int) {
+                screenshotInProgress.set(false)
+                Log.e(TAG, "SCREENSHOT: Error taking screenshot $p0")
+            }
+
+            override fun onSuccess(screenshotResult: ScreenshotResult) {
+                Log.d(TAG, "Success taking screenshot")
+                serviceScope.launch {
+                    var bitmap: Bitmap? = null
+                    try {
+                        Log.d(TAG, "SCREENSHOT: Processing image")
+                        bitmap = Bitmap.wrapHardwareBuffer(
+                            screenshotResult.hardwareBuffer,
+                            screenshotResult.colorSpace,
+                        ) ?: throw IllegalStateException("Could not create bitmap from screenshot")
+
+                        screenshotQueue?.enqueue(bitmap, packageName)
+                        screenshotUploadCoordinator?.requestUpload()
+                    } catch (error: Exception) {
+                        Log.e(TAG, "SCREENSHOT: Screenshot processing failed: ${error.message}", error)
+                    } finally {
+                        bitmap?.recycle()
+                        screenshotResult.hardwareBuffer.close()
                         screenshotInProgress.set(false)
-                        Log.e(TAG, "Error taking screenshot $p0")
                     }
-
-                    override fun onSuccess(screenshotResult: ScreenshotResult) {
-                        Log.d(TAG, "Success taking screenshot")
-                        serviceScope.launch {
-                            var bitmap: Bitmap? = null
-                            try {
-                                Log.d(TAG, "Processing image")
-                                bitmap = Bitmap.wrapHardwareBuffer(
-                                    screenshotResult.hardwareBuffer,
-                                    screenshotResult.colorSpace,
-                                ) ?: throw IllegalStateException("Could not create bitmap from screenshot")
-
-                                screenshotQueue?.enqueue(bitmap, packageName)
-                                screenshotUploadCoordinator?.requestUpload()
-                            } catch (error: Exception) {
-                                Log.e(TAG, "Screenshot processing failed: ${error.message}", error)
-                            } finally {
-                                bitmap?.recycle()
-                                screenshotResult.hardwareBuffer.close()
-                                screenshotInProgress.set(false)
-                            }
-                        }
-                    }
-                })
+                }
             }
-        }
+        })
     }
 
     override fun onInterrupt() {
@@ -272,7 +341,7 @@ class CaptureAccessibilityService : AccessibilityService() {
                     } else {
                         persistentQueue = openedQueue
                         captureQueueBridge = bridge
-                        
+
                         // Initialize screenshot pipeline
                         screenshotQueue = PersistentScreenshotQueue(applicationContext)
                         screenshotUploadCoordinator = ScreenshotUploadCoordinator(
@@ -314,8 +383,6 @@ class CaptureAccessibilityService : AccessibilityService() {
             }
         }
     }
-
-
 
 
 }
