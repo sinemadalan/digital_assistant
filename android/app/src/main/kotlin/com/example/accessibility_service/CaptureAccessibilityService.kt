@@ -90,7 +90,7 @@ class CaptureAccessibilityService : AccessibilityService() {
         private const val SCREENSHOT_DEBOUNCE_MS = 1_000L
         private val lastSummaryTimeByPackage = mutableMapOf<String, Long>()
         private val screenshotInProgress = AtomicBoolean(false)
-        private val lastEventTimeByPackage = ConcurrentHashMap<String, AtomicLong>()
+        private val lastMeaningfulEventTimeByPackage = ConcurrentHashMap<String, AtomicLong>()
         private val isPackageSettled = ConcurrentHashMap<String, Boolean>()
 
         @Volatile
@@ -182,21 +182,25 @@ class CaptureAccessibilityService : AccessibilityService() {
 
         // --- SCREENSHOT LOGIC ---
         val now = System.currentTimeMillis()
-        val lastEventTime = lastEventTimeByPackage.getOrPut(packageName) { AtomicLong(now) }
-        lastEventTime.set(now)
+        val isIgnorable = isIgnorableEvent(event)
+        
+        val lastMeaningfulEventTime = lastMeaningfulEventTimeByPackage.getOrPut(packageName) { AtomicLong(now) }
+        if (!isIgnorable) {
+            lastMeaningfulEventTime.set(now)
+        }
 
         val activeJob = debounceJobs[packageName]
         if (activeJob == null || !activeJob.isActive) {
             // No job running, or it finished. Launch a new one.
             debounceJobs[packageName] = serviceScope.launch {
-                monitorScreenSettle(packageName, lastEventTime)
+                monitorScreenSettle(packageName, lastMeaningfulEventTime)
             }
-        } else if (isPackageSettled[packageName] == true) {
+        } else if (isPackageSettled[packageName] == true && !isIgnorable) {
             // Screen was settled (watching video), but now it's moving again.
             // Cancel the video timer and restart the debounce monitor.
             activeJob.cancel()
             debounceJobs[packageName] = serviceScope.launch {
-                monitorScreenSettle(packageName, lastEventTime)
+                monitorScreenSettle(packageName, lastMeaningfulEventTime)
             }
         }
         // If the job is active AND it's NOT settled, we do absolutely nothing!
@@ -246,12 +250,12 @@ class CaptureAccessibilityService : AccessibilityService() {
         }
     }
 
-    private suspend fun monitorScreenSettle(packageName: String, lastEventTime: AtomicLong) {
+    private suspend fun monitorScreenSettle(packageName: String, lastMeaningfulEventTime: AtomicLong) {
         isPackageSettled[packageName] = false
 
         // 1. Debounce Phase (Wait for Screen to Settle)
         while (true) {
-            val timeSinceLastEvent = System.currentTimeMillis() - lastEventTime.get()
+            val timeSinceLastEvent = System.currentTimeMillis() - lastMeaningfulEventTime.get()
             if (timeSinceLastEvent >= SCREENSHOT_DEBOUNCE_MS) {
                 break // Screen has settled!
             }
@@ -315,6 +319,16 @@ class CaptureAccessibilityService : AccessibilityService() {
     private fun collectScreenSummary(): ScreenSummary {
         val rootNode = rootInActiveWindow ?: return ScreenSummary()
         return nodewalker.walk(rootNode);
+    }
+
+    private fun isIgnorableEvent(event: AccessibilityEvent): Boolean {
+        // Fast path check directly on event properties to avoid IPC cost of event.source
+        val className = event.className?.toString() ?: return false
+        return when (className) {
+            "android.widget.SeekBar",
+            "android.widget.ProgressBar" -> true
+            else -> false
+        }
     }
 
     private fun initializePersistentCapturePipeline() {
