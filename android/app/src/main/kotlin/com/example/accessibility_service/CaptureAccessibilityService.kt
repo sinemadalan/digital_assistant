@@ -180,6 +180,10 @@ class CaptureAccessibilityService : AccessibilityService() {
         val packageName = event.packageName?.toString() ?: return
         val appName = TARGET_APPS[packageName] ?: return
 
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            logWindowContentChanged(event, appName)
+        }
+
         // --- SCREENSHOT LOGIC ---
         val now = System.currentTimeMillis()
         val isIgnorable = isIgnorableEvent(event)
@@ -319,6 +323,69 @@ class CaptureAccessibilityService : AccessibilityService() {
     private fun collectScreenSummary(): ScreenSummary {
         val rootNode = rootInActiveWindow ?: return ScreenSummary()
         return nodewalker.walk(rootNode);
+    }
+
+    private fun logWindowContentChanged(event: AccessibilityEvent, appName: String) {
+        try {
+            val changeTypes = describeContentChangeTypes(event.contentChangeTypes)
+            val sourceNode = try { event.source } catch (_: Throwable) { null }
+            try {
+                val sourceDetails = if (sourceNode != null) {
+                    val bounds = Rect()
+                    try { sourceNode.getBoundsInScreen(bounds) } catch (_: Throwable) {}
+                    val viewId = try { sourceNode.viewIdResourceName ?: "none" } catch (_: Throwable) { "unknown" }
+                    val className = try { sourceNode.className?.toString() ?: "unknown" } catch (_: Throwable) { "unknown" }
+                    val textPreview = try {
+                        sourceNode.text?.let { "\"${it.toString().replace("\n", " ").take(60)}\"" } ?: "null"
+                    } catch (_: Throwable) { "null" }
+                    val descPreview = try {
+                        sourceNode.contentDescription?.let { "\"$it\"" } ?: "null"
+                    } catch (_: Throwable) { "null" }
+                    val stateDesc = if (Build.VERSION.SDK_INT >= 30) {
+                        try { sourceNode.stateDescription?.let { "\"$it\"" } ?: "null" } catch (_: Throwable) { "null" }
+                    } else {
+                        "N/A"
+                    }
+                    val isClickable = try { sourceNode.isClickable } catch (_: Throwable) { false }
+                    val isEnabled = try { sourceNode.isEnabled } catch (_: Throwable) { false }
+                    val isScrollable = try { sourceNode.isScrollable } catch (_: Throwable) { false }
+
+                    "viewId=$viewId, class=$className, text=$textPreview, desc=$descPreview, " +
+                            "state=$stateDesc, bounds=[${bounds.left},${bounds.top}][${bounds.right},${bounds.bottom}], " +
+                            "clickable=$isClickable, scrollable=$isScrollable, enabled=$isEnabled"
+                } else {
+                    "source=null (root/window-level change or node recycled)"
+                }
+
+                val eventText = if (event.text.isNotEmpty()) " | eventText=${event.text}" else ""
+                Log.i(TAG, "[$appName] WINDOW_CONTENT_CHANGED -> types=[$changeTypes] | $sourceDetails$eventText")
+            } finally {
+                try {
+                    @Suppress("DEPRECATION")
+                    sourceNode?.recycle()
+                } catch (_: Throwable) {}
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "[$appName] Error in logWindowContentChanged: ${t.message}", t)
+        }
+    }
+
+    private fun describeContentChangeTypes(changeTypes: Int): String {
+        if (changeTypes == 0) return "CONTENT_CHANGE_TYPE_UNDEFINED"
+        val types = mutableListOf<String>()
+        if (changeTypes and 1 != 0) types.add("SUBTREE")
+        if (changeTypes and 2 != 0) types.add("TEXT")
+        if (changeTypes and 4 != 0) types.add("CONTENT_DESCRIPTION")
+        if (changeTypes and 8 != 0) types.add("PANE_TITLE")
+        if (changeTypes and 16 != 0) types.add("PANE_APPEARED")
+        if (changeTypes and 32 != 0) types.add("PANE_DISAPPEARED")
+        if (changeTypes and 64 != 0) types.add("STATE_DESCRIPTION")
+        if (changeTypes and 128 != 0) types.add("DRAG_STARTED")
+        if (changeTypes and 256 != 0) types.add("DRAG_DROPPED")
+        if (changeTypes and 512 != 0) types.add("DRAG_CANCELLED")
+        if (changeTypes and 1024 != 0) types.add("ERROR")
+        if (changeTypes and 2048 != 0) types.add("ENABLED")
+        return if (types.isEmpty()) "UNKNOWN ($changeTypes)" else types.joinToString("|")
     }
 
     private fun isIgnorableEvent(event: AccessibilityEvent): Boolean {
