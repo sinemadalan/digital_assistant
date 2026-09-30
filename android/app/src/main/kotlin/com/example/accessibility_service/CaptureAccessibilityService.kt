@@ -180,14 +180,14 @@ class CaptureAccessibilityService : AccessibilityService() {
         val packageName = event.packageName?.toString() ?: return
         val appName = TARGET_APPS[packageName] ?: return
 
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
-            logWindowContentChanged(event, appName)
-        }
+        // if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+        //     logWindowContentChanged(event, appName)
+        // }
 
         // --- SCREENSHOT LOGIC ---
         val now = System.currentTimeMillis()
         val isIgnorable = isIgnorableEvent(event)
-        
+
         val lastMeaningfulEventTime = lastMeaningfulEventTimeByPackage.getOrPut(packageName) { AtomicLong(now) }
         if (!isIgnorable) {
             lastMeaningfulEventTime.set(now)
@@ -328,27 +328,62 @@ class CaptureAccessibilityService : AccessibilityService() {
     private fun logWindowContentChanged(event: AccessibilityEvent, appName: String) {
         try {
             val changeTypes = describeContentChangeTypes(event.contentChangeTypes)
-            val sourceNode = try { event.source } catch (_: Throwable) { null }
+            val sourceNode = try {
+                event.source
+            } catch (_: Throwable) {
+                null
+            }
             try {
                 val sourceDetails = if (sourceNode != null) {
                     val bounds = Rect()
-                    try { sourceNode.getBoundsInScreen(bounds) } catch (_: Throwable) {}
-                    val viewId = try { sourceNode.viewIdResourceName ?: "none" } catch (_: Throwable) { "unknown" }
-                    val className = try { sourceNode.className?.toString() ?: "unknown" } catch (_: Throwable) { "unknown" }
+                    try {
+                        sourceNode.getBoundsInScreen(bounds)
+                    } catch (_: Throwable) {
+                    }
+                    val viewId = try {
+                        sourceNode.viewIdResourceName ?: "none"
+                    } catch (_: Throwable) {
+                        "unknown"
+                    }
+                    val className = try {
+                        sourceNode.className?.toString() ?: "unknown"
+                    } catch (_: Throwable) {
+                        "unknown"
+                    }
                     val textPreview = try {
                         sourceNode.text?.let { "\"${it.toString().replace("\n", " ").take(60)}\"" } ?: "null"
-                    } catch (_: Throwable) { "null" }
+                    } catch (_: Throwable) {
+                        "null"
+                    }
                     val descPreview = try {
                         sourceNode.contentDescription?.let { "\"$it\"" } ?: "null"
-                    } catch (_: Throwable) { "null" }
+                    } catch (_: Throwable) {
+                        "null"
+                    }
                     val stateDesc = if (Build.VERSION.SDK_INT >= 30) {
-                        try { sourceNode.stateDescription?.let { "\"$it\"" } ?: "null" } catch (_: Throwable) { "null" }
+                        try {
+                            sourceNode.stateDescription?.let { "\"$it\"" } ?: "null"
+                        } catch (_: Throwable) {
+                            "null"
+                        }
                     } else {
                         "N/A"
                     }
-                    val isClickable = try { sourceNode.isClickable } catch (_: Throwable) { false }
-                    val isEnabled = try { sourceNode.isEnabled } catch (_: Throwable) { false }
-                    val isScrollable = try { sourceNode.isScrollable } catch (_: Throwable) { false }
+                    val isClickable = try {
+                        sourceNode.isClickable
+                    } catch (_: Throwable) {
+                        false
+                    }
+                    val isEnabled = try {
+                        sourceNode.isEnabled
+                    } catch (_: Throwable) {
+                        false
+                    }
+                    val isScrollable = try {
+                        sourceNode.isScrollable
+                    } catch (_: Throwable) {
+                        false
+                    }
 
                     "viewId=$viewId, class=$className, text=$textPreview, desc=$descPreview, " +
                             "state=$stateDesc, bounds=[${bounds.left},${bounds.top}][${bounds.right},${bounds.bottom}], " +
@@ -363,7 +398,8 @@ class CaptureAccessibilityService : AccessibilityService() {
                 try {
                     @Suppress("DEPRECATION")
                     sourceNode?.recycle()
-                } catch (_: Throwable) {}
+                } catch (_: Throwable) {
+                }
             }
         } catch (t: Throwable) {
             Log.e(TAG, "[$appName] Error in logWindowContentChanged: ${t.message}", t)
@@ -394,6 +430,7 @@ class CaptureAccessibilityService : AccessibilityService() {
         return when (className) {
             "android.widget.SeekBar",
             "android.widget.ProgressBar" -> true
+
             else -> false
         }
     }
