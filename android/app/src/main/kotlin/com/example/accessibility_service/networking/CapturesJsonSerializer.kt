@@ -1,7 +1,9 @@
 package com.example.accessibility_service.networking
 
+import com.example.accessibility_service.Util.BoundsInScreen
 import com.example.accessibility_service.persistence.QueuedCapture
 import com.example.accessibility_service.persistence.QueuedCaptureNode
+import com.example.accessibility_service.persistence.validateParentIndices
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -12,6 +14,7 @@ internal object CapturesJsonSerializer {
         .toString()
 
     private fun captureToJson(capture: QueuedCapture): JSONObject = JSONObject()
+        .also { capture.validateParentIndices() }
         .put("packageName", capture.packageName)
         .put("appName", capture.appName)
         .put("eventType", capture.eventType)
@@ -20,6 +23,8 @@ internal object CapturesJsonSerializer {
         .put("nodes", JSONArray(capture.nodes.map(::nodeToJson)))
         .put("isTargetApp", capture.isTargetApp)
         .put("isSupportedEventType", capture.isSupportedEventType)
+        .putNullable("rootPackageName", capture.rootPackageName)
+        .putNullable("windowBoundsInScreen", capture.windowBoundsInScreen?.let(::boundsToJson))
 
     private fun nodeToJson(node: QueuedCaptureNode): JSONObject = JSONObject()
         .putNullable("text", node.text)
@@ -28,8 +33,17 @@ internal object CapturesJsonSerializer {
         .putNullable("viewIdResourceName", node.viewIdResourceName)
         .put("isClickable", node.isClickable)
         .put("isEditable", node.isEditable)
+        .put("visibleToUser", node.visibleToUser)
+        .put("boundsInScreen", boundsToJson(node.boundsInScreen))
+        .putNullable("parentIndex", node.parentIndex)
 
-    private fun JSONObject.putNullable(name: String, value: String?): JSONObject =
+    private fun boundsToJson(bounds: BoundsInScreen): JSONObject = JSONObject()
+        .put("left", bounds.left)
+        .put("top", bounds.top)
+        .put("right", bounds.right)
+        .put("bottom", bounds.bottom)
+
+    private fun JSONObject.putNullable(name: String, value: Any?): JSONObject =
         put(name, value ?: JSONObject.NULL)
 }
 

@@ -44,6 +44,11 @@ class AccessibilityCaptureMapperTest {
         )
 
         assertEquals("com.whatsapp", capture.packageName)
+        assertEquals(summary.rootPackageName, capture.rootPackageName)
+        assertEquals(summary.windowBoundsInScreen, capture.windowBoundsInScreen)
+        assertEquals(false, capture.nodes.single().visibleToUser)
+        assertEquals(summary.nodes.single().boundsInScreen, capture.nodes.single().boundsInScreen)
+        assertEquals(null, capture.nodes.single().parentIndex)
         assertEquals("WhatsApp", capture.appName)
         assertEquals("TYPE_WINDOW_CONTENT_CHANGED", capture.eventType)
         assertEquals(listOf("first", "second"), capture.screenText)

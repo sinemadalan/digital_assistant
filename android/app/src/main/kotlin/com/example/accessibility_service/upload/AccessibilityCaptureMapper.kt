@@ -21,6 +21,8 @@ internal object AccessibilityCaptureMapper {
         eventType = eventType,
         capturedAtDevice = capturedAt.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME),
         screenText = screenSummary.texts.toList(),
+        rootPackageName = screenSummary.rootPackageName,
+        windowBoundsInScreen = screenSummary.windowBoundsInScreen,
         nodes = screenSummary.nodes.map { node ->
             QueuedCaptureNode(
                 text = node.text,
@@ -29,6 +31,9 @@ internal object AccessibilityCaptureMapper {
                 viewIdResourceName = node.viewIdResourceName,
                 isClickable = node.isClickable,
                 isEditable = node.isEditable,
+                visibleToUser = node.visibleToUser,
+                boundsInScreen = node.boundsInScreen,
+                parentIndex = node.parentIndex,
             )
         },
         isTargetApp = isTargetApp,

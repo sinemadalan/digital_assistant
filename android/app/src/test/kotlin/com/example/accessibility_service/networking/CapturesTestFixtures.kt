@@ -1,5 +1,6 @@
 package com.example.accessibility_service.networking
 
+import com.example.accessibility_service.Util.BoundsInScreen
 import com.example.accessibility_service.persistence.QueuedCapture
 import com.example.accessibility_service.persistence.QueuedCaptureNode
 
@@ -8,6 +9,9 @@ internal fun sampleCapture(
     screenText: List<String> = listOf("Uninstall", "Cancel", "Instagram"),
     nodes: List<QueuedCaptureNode> = listOf(
         QueuedCaptureNode(
+            visibleToUser = true,
+            boundsInScreen = BoundsInScreen(0, 100, 1080, 1700),
+            parentIndex = null,
             text = "Uninstall",
             contentDescription = null,
             className = "android.widget.Button",
