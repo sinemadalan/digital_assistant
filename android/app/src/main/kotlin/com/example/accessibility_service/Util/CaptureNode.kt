@@ -7,4 +7,8 @@ data class CaptureNode(
     val viewIdResourceName: String? = null,
     val isClickable: Boolean = false,
     val isEditable: Boolean = false,
+    val visibleToUser: Boolean,
+    val boundsInScreen: BoundsInScreen,
+    /** Index in the same summary's nodes list; null only for the traversal root. */
+    val parentIndex: Int?,
 )

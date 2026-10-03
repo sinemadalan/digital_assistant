@@ -1,5 +1,6 @@
 package com.example.accessibility_service.persistence
 
+import com.example.accessibility_service.Util.BoundsInScreen
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.nio.ByteBuffer
@@ -10,7 +11,8 @@ import java.nio.charset.StandardCharsets
 class CaptureCodecException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 object CaptureBinaryCodec {
-    const val FORMAT_VERSION = 1
+    // Incompatible older payloads use PersistentEventQueue's existing corrupt-record discard path.
+    const val FORMAT_VERSION = 2
     const val MAX_PAYLOAD_BYTES = 1024 * 1024
     const val MAX_STRING_BYTES = 16 * 1024
     const val MAX_SCREEN_TEXT_COUNT = 256
@@ -19,6 +21,7 @@ object CaptureBinaryCodec {
     fun encode(capture: QueuedCapture): ByteArray {
         require(capture.screenText.size <= MAX_SCREEN_TEXT_COUNT) { "Too many screen text entries." }
         require(capture.nodes.size <= MAX_NODE_COUNT) { "Too many capture nodes." }
+        capture.validateParentIndices()
 
         val output = ByteArrayOutputStream()
         DataOutputStream(output).use { data ->
@@ -37,9 +40,16 @@ object CaptureBinaryCodec {
                 data.writeNullableString(node.viewIdResourceName)
                 data.writeBooleanByte(node.isClickable)
                 data.writeBooleanByte(node.isEditable)
+                data.writeBooleanByte(node.visibleToUser)
+                data.writeBounds(node.boundsInScreen)
+                data.writeBooleanByte(node.parentIndex != null)
+                node.parentIndex?.let { data.writeInt(it) }
             }
             data.writeBooleanByte(capture.isTargetApp)
             data.writeBooleanByte(capture.isSupportedEventType)
+            data.writeNullableString(capture.rootPackageName)
+            data.writeBooleanByte(capture.windowBoundsInScreen != null)
+            capture.windowBoundsInScreen?.let { data.writeBounds(it) }
         }
 
         return output.toByteArray().also { payload ->
@@ -75,6 +85,9 @@ object CaptureBinaryCodec {
                     viewIdResourceName = input.readNullableString(),
                     isClickable = input.readBooleanByte(),
                     isEditable = input.readBooleanByte(),
+                    visibleToUser = input.readBooleanByte(),
+                    boundsInScreen = input.readBounds(),
+                    parentIndex = if (input.readBooleanByte()) input.readInt() else null,
                 )
             }
             val capture = QueuedCapture(
@@ -86,7 +99,10 @@ object CaptureBinaryCodec {
                 nodes = nodes,
                 isTargetApp = input.readBooleanByte(),
                 isSupportedEventType = input.readBooleanByte(),
+                rootPackageName = input.readNullableString(),
+                windowBoundsInScreen = if (input.readBooleanByte()) input.readBounds() else null,
             )
+            capture.validateParentIndices()
             if (input.hasRemaining()) {
                 throw CaptureCodecException("Capture payload contains trailing data.")
             }
@@ -96,6 +112,13 @@ object CaptureBinaryCodec {
         } catch (error: Exception) {
             throw CaptureCodecException("Malformed capture payload.", error)
         }
+    }
+
+    private fun DataOutputStream.writeBounds(bounds: BoundsInScreen) {
+        writeInt(bounds.left)
+        writeInt(bounds.top)
+        writeInt(bounds.right)
+        writeInt(bounds.bottom)
     }
 
     private fun DataOutputStream.writeString(value: String) {
@@ -133,6 +156,8 @@ object CaptureBinaryCodec {
             }
             return value
         }
+
+        fun readBounds(): BoundsInScreen = BoundsInScreen(readInt(), readInt(), readInt(), readInt())
 
         fun readString(): String {
             val length = readInt()

@@ -1,8 +1,12 @@
 package com.example.accessibility_service.persistence
 
+import com.example.accessibility_service.Util.BoundsInScreen
 import java.io.File
+import java.io.ByteArrayOutputStream
+import java.io.DataOutputStream
 import java.io.RandomAccessFile
 import java.nio.file.Files
+import java.util.zip.CRC32
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -13,6 +17,61 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PersistentEventQueueTest {
+    @Test
+    fun versionOnePendingRecordsAreDiscardedAndNewRecordsRemainUploadableAfterReopen() = runTest {
+        val file = newFile()
+        val seed = capture(0).copy(nodes = emptyList(), screenText = emptyList())
+        var queue = open(file)
+        repeat(2) { queue.enqueue(seed) }
+        queue.close()
+
+        // Real V1 payload: four strings, text/node counts, two booleans, no structural fields.
+        // Two extra package bytes match V2's two null root/window markers, keeping framing intact.
+        val oldPayload = ByteArrayOutputStream().also { bytes ->
+            DataOutputStream(bytes).use { data ->
+                data.writeInt(1)
+                listOf(seed.packageName + "v1", seed.appName, seed.eventType, seed.capturedAtDevice)
+                    .forEach { value ->
+                        val utf8 = value.toByteArray(Charsets.UTF_8)
+                        data.writeInt(utf8.size)
+                        data.write(utf8)
+                    }
+                data.writeInt(0)
+                data.writeInt(0)
+                data.writeBoolean(seed.isTargetApp)
+                data.writeBoolean(seed.isSupportedEventType)
+            }
+        }.toByteArray()
+        assertEquals(CaptureBinaryCodec.encode(seed).size, oldPayload.size)
+        RandomAccessFile(file, "rw").use { random ->
+            repeat(2) { index ->
+                val offset = PersistentEventQueue.HEADER_REGION_BYTES.toLong() +
+                    index * (PersistentEventQueue.RECORD_HEADER_BYTES + oldPayload.size)
+                random.seek(offset + 16) // Record CRC, recomputed to isolate version rejection.
+                random.writeInt(CRC32().apply { update(oldPayload) }.value.toInt())
+                random.seek(offset + PersistentEventQueue.RECORD_HEADER_BYTES)
+                random.write(oldPayload)
+            }
+        }
+
+        queue = open(file)
+        assertEquals(2, queue.currentPhysicalRecordCount())
+        assertEquals(0, queue.pendingCount())
+        val fresh = capture(1)
+        queue.enqueue(fresh)
+        val batch = queue.peekBatch(10)
+        assertEquals(listOf(fresh), batch.captures)
+        assertEquals(2L, queue.diagnostics().corruptRecordCount)
+        queue.close()
+
+        queue = open(file)
+        assertEquals(listOf(fresh), queue.peekBatch(10).captures)
+        assertEquals(AcknowledgeResult.FullyAcknowledged,
+            queue.acknowledge(requireNotNull(queue.peekBatch(10).acknowledgmentToken)))
+        assertTrue(queue.isEmpty())
+        queue.close()
+    }
+
     @Test
     fun emptyQueueHasNoBatchAndIsEmpty() = runTest {
         val queue = newQueue()
@@ -95,16 +154,17 @@ class PersistentEventQueueTest {
 
     @Test
     fun recordWrapsAtDataRegionBoundary() = runTest {
-        val queue = newQueue(capacity = SMALL_CAPACITY)
-        val recordBytes = PersistentEventQueue.RECORD_HEADER_BYTES + CaptureBinaryCodec.encode(capture(1)).size
-        val initialCount = SMALL_CAPACITY / recordBytes
-        (1..initialCount).forEach { queue.enqueue(capture(it)) }
+        val recordBytes = ringRecordBytes()
+        // Fit three equal-size records and a partial tail regardless of codec payload growth.
+        val initialCount = 3
+        val queue = newQueue(capacity = initialCount * recordBytes + recordBytes / 2)
+        (1..initialCount).forEach { queue.enqueue(ringCapture(it)) }
         val acknowledged = queue.peekBatch(initialCount - 1)
         queue.acknowledge(requireNotNull(acknowledged.acknowledgmentToken))
-        queue.enqueue(capture(99))
+        queue.enqueue(ringCapture(99))
 
         assertEquals(2, queue.currentPhysicalRecordCount())
-        assertEquals(listOf(capture(initialCount), capture(99)), queue.peekBatch(10).captures)
+        assertEquals(listOf(ringCapture(initialCount), ringCapture(99)), queue.peekBatch(10).captures)
         queue.close()
     }
 
@@ -550,6 +610,9 @@ class PersistentEventQueueTest {
         nodes = listOf(
             QueuedCaptureNode(
                 text = "node-%03d".format(id),
+                visibleToUser = true,
+                boundsInScreen = BoundsInScreen(-100, -500, 1080, 2500),
+                parentIndex = null,
                 contentDescription = null,
                 className = "android.widget.TextView",
                 viewIdResourceName = null,
@@ -576,6 +639,9 @@ class PersistentEventQueueTest {
         nodes = listOf(
             QueuedCaptureNode(
                 text = "node-$id",
+                visibleToUser = id % 2 == 0,
+                boundsInScreen = BoundsInScreen(-100, -500, 1080, 2500),
+                parentIndex = null,
                 contentDescription = if (id % 2 == 0) null else "description-$id",
                 className = "android.widget.TextView",
                 viewIdResourceName = null,
