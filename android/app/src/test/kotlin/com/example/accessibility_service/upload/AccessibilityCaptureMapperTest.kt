@@ -1,6 +1,7 @@
 package com.example.accessibility_service.upload
 
 import com.example.accessibility_service.Util.CaptureNode
+import com.example.accessibility_service.Util.BoundsInScreen
 import com.example.accessibility_service.Util.ScreenSummary
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
@@ -14,6 +15,8 @@ class AccessibilityCaptureMapperTest {
         val capturedAt = OffsetDateTime.parse("2026-09-02T10:15:30.123+03:00")
         val summary = ScreenSummary(
             nodeCount = 7,
+            rootPackageName = "different.root.package",
+            windowBoundsInScreen = BoundsInScreen(-10, 20, 1000, 2000),
             texts = listOf("first", "second"),
             nodes = listOf(
                 CaptureNode(
@@ -23,6 +26,9 @@ class AccessibilityCaptureMapperTest {
                     viewIdResourceName = "com.whatsapp:id/message",
                     isClickable = true,
                     isEditable = true,
+                    visibleToUser = false,
+                    boundsInScreen = BoundsInScreen(-20, -30, 1500, 2500),
+                    parentIndex = null,
                 ),
             ),
         )

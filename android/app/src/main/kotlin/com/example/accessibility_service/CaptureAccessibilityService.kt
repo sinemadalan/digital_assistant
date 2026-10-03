@@ -8,8 +8,10 @@ import android.os.Build
 import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.annotation.RequiresApi
 import com.example.accessibility_service.Util.NodeWalker
+import com.example.accessibility_service.Util.BoundsInScreen
 import com.example.accessibility_service.Util.ScreenSummary
 import com.example.accessibility_service.networking.CapturesApiClient
 import com.example.accessibility_service.persistence.PersistentEventQueue
@@ -322,7 +324,30 @@ class CaptureAccessibilityService : AccessibilityService() {
 
     private fun collectScreenSummary(): ScreenSummary {
         val rootNode = rootInActiveWindow ?: return ScreenSummary()
-        return nodewalker.walk(rootNode);
+        val rootPackageName = rootNode.packageName?.toString()
+        val windowBounds = readWindowBounds(rootNode)
+        return nodewalker.walk(rootNode).copy(
+            rootPackageName = rootPackageName,
+            windowBoundsInScreen = windowBounds,
+        )
+    }
+
+    private fun readWindowBounds(rootNode: AccessibilityNodeInfo): BoundsInScreen? {
+        // Use the root's own window, not a later active-window snapshot.
+        return try {
+            val window = rootNode.window ?: return null
+            try {
+                val bounds = Rect()
+                window.getBoundsInScreen(bounds)
+                BoundsInScreen(bounds.left, bounds.top, bounds.right, bounds.bottom)
+            } finally {
+                @Suppress("DEPRECATION")
+                window.recycle()
+            }
+        } catch (_: RuntimeException) {
+            // Unavailable window metadata must not discard the capture.
+            null
+        }
     }
 
     private fun logWindowContentChanged(event: AccessibilityEvent, appName: String) {
