@@ -18,6 +18,7 @@ izin verilen Android erişilebilirlik servisi üzerinden belirli uygulamalardaki
 - Metin özetlerini kalıcı queue üzerinden production `/v1/captures` API'sine gönderme
 - Ekran görüntülerini JPEG olarak sıkıştırıp sunucuya yükleme
 - Yakalanan kayıtları listeleyen ve uygulama bazında özetleyen API uçları
+- Sunucu içerik sınıflandırıcı tespitleri için bildirim sistemi ve test butonu ([Dokümantasyon](docs/NOTIFICATIONS.md))
 - Hassas çalışma zamanı dosyalarını Git dışında tutan allowlist tabanlı
   `.gitignore`
 
