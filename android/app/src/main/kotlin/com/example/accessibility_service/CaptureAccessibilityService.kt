@@ -470,6 +470,7 @@ class CaptureAccessibilityService : AccessibilityService() {
                     tokenStore = NativeTokenStore(applicationContext),
                     queue = openedQueue,
                     apiClient = CapturesApiClient(),
+                    notificationManager = com.example.accessibility_service.notification.AppNotificationManager.getInstance(applicationContext),
                 )
                 bridge = CaptureQueueBridge(
                     scope = serviceScope,

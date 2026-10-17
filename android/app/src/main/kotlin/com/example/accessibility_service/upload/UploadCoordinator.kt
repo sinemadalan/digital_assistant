@@ -12,6 +12,8 @@ import com.example.accessibility_service.persistence.QueuedCapture
 import com.example.accessibility_service.persistence.QueuedCaptureBatch
 import kotlinx.coroutines.sync.Mutex
 
+import com.example.accessibility_service.notification.AppNotificationManager
+
 data class UploadRuntimeConfig(
     val batchSize: Int,
     val flushSeconds: Int,
@@ -56,17 +58,20 @@ class UploadCoordinator internal constructor(
     private val tokenStore: UploadTokenStore,
     private val queue: UploadEventQueue,
     private val apiClient: UploadCapturesClient,
+    private val notificationManager: AppNotificationManager? = null,
     private val pipelineLogger: (String) -> Unit = {},
 ) {
     constructor(
         tokenStore: NativeTokenStore,
         queue: PersistentEventQueue,
         apiClient: CapturesApiClient = CapturesApiClient(),
+        notificationManager: AppNotificationManager? = null,
         pipelineLogger: (String) -> Unit = { message -> Log.i(PHASE5A_TAG, message) },
     ) : this(
         tokenStore = NativeTokenStoreAdapter(tokenStore),
         queue = PersistentEventQueueAdapter(queue),
         apiClient = CapturesApiClientAdapter(apiClient),
+        notificationManager = notificationManager,
         pipelineLogger = pipelineLogger,
     )
 
@@ -112,6 +117,7 @@ class UploadCoordinator internal constructor(
                         "skipped=${result.response.skipped}",
                 )
                 applyValidConfig(result.response.config.batchSize, result.response.config.flushSeconds)
+                handleServerAlert(result.response.alert)
                 acknowledgeAcceptedBatch(
                     token = acknowledgmentToken,
                     accepted = result.response.accepted,
@@ -174,6 +180,21 @@ class UploadCoordinator internal constructor(
             AcknowledgeResult.Stale -> UploadOutcome.AckConflict(AcknowledgmentSource.UNPROCESSABLE)
             else -> UploadOutcome.BatchDiscardedUnprocessable(acknowledgment)
         }
+
+    private fun handleServerAlert(alert: com.example.accessibility_service.networking.ServerAlertResponse?) {
+        if (alert == null) return
+        val manager = notificationManager ?: return
+        pipelineLogger("Phase5A: server alert received: ${alert.title}")
+        val posted = manager.notifyServerAlert(
+            title = alert.title,
+            message = alert.message,
+            alertType = alert.alertType,
+            payload = alert.metadata,
+        )
+        if (!posted) {
+            pipelineLogger("Phase5A: notification preconditions not met or post failed for alert: ${alert.title}")
+        }
+    }
 
     private fun applyValidConfig(batchSize: Int, flushSeconds: Int) {
         val current = config

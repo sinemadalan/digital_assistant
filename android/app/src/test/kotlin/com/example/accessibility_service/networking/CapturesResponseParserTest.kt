@@ -35,6 +35,68 @@ class CapturesResponseParserTest {
     }
 
     @Test
+    fun parsesOptionalServerAlertWhenPresent() {
+        val json = """
+            {
+              "accepted": 1,
+              "skipped": 0,
+              "config": {"batch_size": 30, "flush_seconds": 20},
+              "commands": [],
+              "alert": {
+                "title": "Suspicious Activity",
+                "message": "Potential credential prompt detected.",
+                "alert_type": "SECURITY_WARNING",
+                "metadata": {
+                  "confidence": "0.98",
+                  "category": "phishing"
+                }
+              }
+            }
+        """.trimIndent()
+
+        val response = CapturesResponseParser.parse(json, sentEventCount = 1)
+        val alert = response.alert
+
+        org.junit.Assert.assertNotNull(alert)
+        assertEquals("Suspicious Activity", alert?.title)
+        assertEquals("Potential credential prompt detected.", alert?.message)
+        assertEquals("SECURITY_WARNING", alert?.alertType)
+        assertEquals("0.98", alert?.metadata?.get("confidence"))
+        assertEquals("phishing", alert?.metadata?.get("category"))
+    }
+
+    @Test
+    fun parsesAlertWithFallbackDefaults() {
+        val json = """
+            {
+              "accepted": 1,
+              "skipped": 0,
+              "config": {"batch_size": 30, "flush_seconds": 20},
+              "commands": [],
+              "alert": {
+                "type": "MALWARE_RISK",
+                "description": "App displays suspicious overlay"
+              }
+            }
+        """.trimIndent()
+
+        val response = CapturesResponseParser.parse(json, sentEventCount = 1)
+        val alert = response.alert
+
+        org.junit.Assert.assertNotNull(alert)
+        assertEquals("MALWARE_RISK", alert?.title)
+        assertEquals("App displays suspicious overlay", alert?.message)
+        assertEquals("MALWARE_RISK", alert?.alertType)
+        assertEquals(emptyMap<String, String>(), alert?.metadata)
+    }
+
+    @Test
+    fun parsesResponseWithoutAlertAsNull() {
+        val response = CapturesResponseParser.parse(validResponse(), sentEventCount = 1)
+        org.junit.Assert.assertNull(response.alert)
+    }
+
+    @Test
     fun rejectsMissingOrNonIntegerCounts() {
         assertInvalid("""{"skipped":0,"config":{"batch_size":30,"flush_seconds":20},"commands":[]}""")
         assertInvalid("""{"accepted":0,"config":{"batch_size":30,"flush_seconds":20},"commands":[]}""")

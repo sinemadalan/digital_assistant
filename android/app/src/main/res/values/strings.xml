@@ -3,4 +3,6 @@
     <string name="app_name">Accessibility Service Prototype</string>
     <string name="accessibility_service_label">Dijital Asistan Capture Service</string>
     <string name="accessibility_service_description">Instagram, WhatsApp ve Facebook ekranlarindaki erisilebilir icerigi test amacli yakalar.</string>
+    <string name="notification_channel_alerts_name">Server Detection Alerts</string>
+    <string name="notification_channel_alerts_desc">Notifications sent when server content classifier detects important events</string>
 </resources>
