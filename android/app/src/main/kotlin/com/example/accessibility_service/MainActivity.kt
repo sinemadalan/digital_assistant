@@ -122,6 +122,19 @@ class MainActivity : FlutterActivity(){
                             result.success(null)
                         }
                     }
+                    "testLocalNotification" -> {
+                        try {
+                            val manager = com.example.accessibility_service.notification.AppNotificationManager.getInstance(applicationContext)
+                            val posted = manager.notifyServerAlert(
+                                title = "Test Notification",
+                                message = "Hello notification",
+                                alertType = "TEST_ALERT",
+                            )
+                            result.success(posted)
+                        } catch (e: Exception) {
+                            result.error("NOTIFICATION_ERROR", "Failed to send test notification: ${e.message}", null)
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }

@@ -44,15 +44,42 @@ class _ControlPanelState extends State<ControlPanel> {
   /// Organizes the main vertical structure of the screen.
   Widget _buildMainLayout(bool isRunning) {
     return Center(
-        child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-        _buildStatusIndicator(isRunning),
-        const SizedBox(height: 30),
-        // Conditionally show either the settings button OR the pause toggle
-        if (!isRunning) _buildSettingsButton() else _buildPauseToggle(),
-    ],
-    ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _buildStatusIndicator(isRunning),
+          const SizedBox(height: 30),
+          // Conditionally show either the settings button OR the pause toggle
+          if (!isRunning) _buildSettingsButton() else _buildPauseToggle(),
+          const SizedBox(height: 24),
+          _buildTestNotificationButton(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTestNotificationButton() {
+    return ElevatedButton.icon(
+      onPressed: _sendTestNotification,
+      icon: const Icon(Icons.notifications_active),
+      label: const Text('Test local notification'),
+      style: ElevatedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      ),
+    );
+  }
+
+  Future<void> _sendTestNotification() async {
+    final posted = await AccessibilityManager.testLocalNotification();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          posted
+              ? 'Notification "Hello notification" sent!'
+              : 'Could not send notification (check permissions or notification settings)',
+        ),
+      ),
     );
   }
 
