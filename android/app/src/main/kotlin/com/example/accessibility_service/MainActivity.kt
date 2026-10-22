@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 class MainActivity : FlutterActivity(){
     private val EVENT_CHANNEL = "com.your.package/accessibility_status"
     private val METHOD_CHANNEL = "com.your.package/accessibility_commands"
+    private val AUTH_EVENT_CHANNEL = "com.your.package/auth_status"
     private val nativeTokenStore by lazy { NativeTokenStore(applicationContext) }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -37,6 +38,23 @@ class MainActivity : FlutterActivity(){
                 override fun onCancel(arguments: Any?) {
                     job?.cancel()
                 }
+            })
+
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, AUTH_EVENT_CHANNEL)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                private var job: Job? = null
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    job = lifecycleScope.launch {
+                        try {
+                            nativeTokenStore.reauthenticationChanges.collect { events?.success(it) }
+                        } catch (error: kotlinx.coroutines.CancellationException) {
+                            throw error
+                        } catch (_: Exception) {
+                            events?.error("AUTH_STORAGE_ERROR", "Unable to read enrollment status.", null)
+                        }
+                    }
+                }
+                override fun onCancel(arguments: Any?) { job?.cancel(); job = null }
             })
 
         // 2. MethodChannel: Receive commands from Flutter to Android
@@ -139,9 +157,13 @@ class MainActivity : FlutterActivity(){
                     }
                     "notificationAvailability" -> {
                         val manager = com.example.accessibility_service.notification.AppNotificationManager.getInstance(applicationContext)
-                        result.success(manager.availability(
+                        val availability = manager.availability(
                             com.example.accessibility_service.notification.NotificationType.CLASSIFICATION_ALERT,
-                        ).wireValue)
+                        )
+                        if (availability == com.example.accessibility_service.notification.NotificationAvailability.READY) {
+                            CaptureAccessibilityService.notifyNotificationPermissionAvailable()
+                        }
+                        result.success(availability.wireValue)
                     }
                     "requestNotificationPermission" -> requestNotificationPermission(result)
                     else -> result.notImplemented()

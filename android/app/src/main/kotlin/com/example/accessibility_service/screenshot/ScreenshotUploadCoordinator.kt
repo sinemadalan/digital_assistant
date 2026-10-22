@@ -46,7 +46,7 @@ class ScreenshotUploadCoordinator(
                 }
                 is ScreenshotUploadResult.Unauthorized -> {
                     logger("Token unauthorized, revoking and halting screenshot uploads")
-                    tokenStore.clearToken()
+                    tokenStore.clearTokenIfMatches(token)
                     return
                 }
                 is ScreenshotUploadResult.NotFound -> {

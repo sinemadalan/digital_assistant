@@ -5,6 +5,7 @@ import com.example.accessibility_service.networking.NotificationsApiResult
 import com.example.accessibility_service.networking.ServerNotification
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -17,6 +18,7 @@ enum class NotificationDeliveryStatus {
     CLIENT_ERROR,
     STORAGE_ERROR,
     OWNER_CHANGED,
+    SESSION_CHANGED,
 }
 
 data class NotificationDeliveryResult(
@@ -37,17 +39,20 @@ class NotificationDeliveryCoordinator internal constructor(
     private val presenter: StoredNotificationPresenter,
     private val acknowledger: NotificationAcknowledger,
     private val nowMillis: () -> Long = System::currentTimeMillis,
+    private val sessionIsCurrent: suspend () -> Boolean = { true },
 ) {
     constructor(
         store: PersistentNotificationStore,
         manager: AppNotificationManager,
         apiClient: NotificationsApiClient = NotificationsApiClient(),
         nowMillis: () -> Long = System::currentTimeMillis,
+        sessionIsCurrent: suspend () -> Boolean = { true },
     ) : this(
         PersistentDeliveryStore(store),
         InboxNotificationPresenter(manager),
         ApiNotificationAcknowledger(apiClient),
         nowMillis,
+        sessionIsCurrent,
     )
 
     // Wait rather than dropping an already-consumed fetched batch when another call is active.
@@ -71,6 +76,8 @@ class NotificationDeliveryCoordinator internal constructor(
             NotificationDeliveryResult(status, displayed, acknowledged, notFound, retryAfter)
 
         suspend fun acknowledge(id: String): NotificationDeliveryResult? {
+            if (!sessionIsCurrent()) return result(NotificationDeliveryStatus.SESSION_CHANGED)
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
             return when (val response = acknowledger.acknowledge(requireNotNull(token), id)) {
                 is NotificationsApiResult.Success -> {
                     store.markAcknowledged(id)
@@ -96,12 +103,16 @@ class NotificationDeliveryCoordinator internal constructor(
             if (fetched != null) store.saveFetched(fetched)
             if (token.isNullOrBlank()) return@withLock result(NotificationDeliveryStatus.NO_VALID_TOKEN)
 
+            if (!sessionIsCurrent()) return@withLock result(NotificationDeliveryStatus.SESSION_CHANGED)
+
             // Retry old receipts before new delivery. These rows must never be re-presented.
             for (row in store.pendingAcknowledgements()) {
                 acknowledge(row.id)?.let { return@withLock it }
             }
             for (row in store.pendingDisplay()) {
                 if (row.expiresAtMillis <= nowMillis()) continue
+                if (!sessionIsCurrent()) return@withLock result(NotificationDeliveryStatus.SESSION_CHANGED)
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 val accepted = try {
                     presenter.show(row)
                 } catch (error: CancellationException) {

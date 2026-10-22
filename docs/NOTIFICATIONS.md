@@ -1,4 +1,4 @@
-> Current backend contract uses a separate pending/ack inbox, not embedded upload alerts. See [NOTIFICATION_API.md](NOTIFICATION_API.md) and [NOTIFICATION_DELIVERY.md](NOTIFICATION_DELIVERY.md) for the API, durable inbox, delivery and permission stages. The embedded-alert workflow below is legacy.
+> Current backend contract uses a separate pending/ack inbox, not embedded upload alerts. See [NOTIFICATION_API.md](NOTIFICATION_API.md) and [NOTIFICATION_POLLING.md](NOTIFICATION_POLLING.md) for the API, durable inbox, delivery and permission stages. The embedded-alert workflow below is legacy; the service now uses automatic inbox polling.
 
 # Notification System (Phase 1 & Phase 2 Architecture)
 

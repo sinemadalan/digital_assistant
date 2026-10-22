@@ -4,6 +4,8 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -95,6 +97,42 @@ class NativeTokenStoreTest {
 
         assertTrue(store.isReauthenticationRequired())
         assertNull(store.getToken())
+    }
+
+
+    @Test
+    fun conditionalRevocationDoesNotClearFreshOrDifferentToken() = runTest {
+        val store = newStore()
+        store.installFreshToken("old")
+        store.installFreshToken("fresh")
+        assertFalse(store.clearTokenIfMatches("old"))
+        assertEquals("fresh", store.getToken())
+        assertFalse(store.isReauthenticationRequired())
+        assertTrue(store.clearTokenIfMatches("fresh"))
+        assertNull(store.getToken())
+        assertTrue(store.isReauthenticationRequired())
+        assertFalse(store.clearTokenIfMatches("fresh"))
+    }
+
+    @Test
+    fun tokenAndReenrollmentFlowsObserveChangesAcrossStoreInstances() = runTest {
+        val data = FakePreferencesDataStore()
+        val first = NativeTokenStore(data, FakeTokenCipher())
+        val second = NativeTokenStore(data, FakeTokenCipher())
+        val events = kotlinx.coroutines.channels.Channel<String?>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        val observer = backgroundScope.launch {
+            second.tokenChanges.collect { events.send(it) }
+        }
+        assertNull(events.receive())
+        first.installFreshToken("device-token")
+        assertEquals("device-token", events.receive())
+        assertTrue(first.clearTokenIfMatches("device-token"))
+        assertNull(events.receive())
+        assertTrue(second.reauthenticationChanges.first())
+        first.installFreshToken("fresh-token")
+        assertEquals("fresh-token", events.receive())
+        assertFalse(second.reauthenticationChanges.first())
+        observer.cancel()
     }
 
     private fun newStore(): NativeTokenStore = NativeTokenStore(

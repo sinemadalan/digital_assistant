@@ -7,6 +7,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const commands = MethodChannel('com.your.package/accessibility_commands');
   const events = MethodChannel('com.your.package/accessibility_status');
+  const authEvents = MethodChannel('com.your.package/auth_status');
   var status = 'ready';
   var grantOnRequest = true;
   var permissionRequests = 0;
@@ -18,6 +19,7 @@ void main() {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(events, (_) async => null);
+    messenger.setMockMethodCallHandler(authEvents, (_) async => null);
     messenger.setMockMethodCallHandler(commands, (call) async {
       switch (call.method) {
         case 'notificationAvailability':
@@ -39,12 +41,41 @@ void main() {
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(commands, null);
     messenger.setMockMethodCallHandler(events, null);
+    messenger.setMockMethodCallHandler(authEvents, null);
   });
 
   Future<void> openPanel(WidgetTester tester) async {
     await tester.pumpWidget(const MaterialApp(home: ControlPanel()));
     await tester.pumpAndSettle();
   }
+
+  testWidgets('revoked enrollment is reported without leaving the panel', (
+    tester,
+  ) async {
+    await openPanel(tester);
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    await messenger.handlePlatformMessage(
+      'com.your.package/auth_status',
+      const StandardMethodCodec().encodeSuccessEnvelope(true),
+      null,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Yeniden eşleştir'), findsOneWidget);
+    expect(
+      find.text(
+        'Cihaz bağlantısı geçersiz. Yeni bir eşleştirme koduyla tekrar bağlanın.',
+      ),
+      findsOneWidget,
+    );
+    await messenger.handlePlatformMessage(
+      'com.your.package/auth_status',
+      const StandardMethodCodec().encodeSuccessEnvelope(false),
+      null,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Yeniden eşleştir'), findsNothing);
+  });
 
   testWidgets('permission grant refreshes notification status', (tester) async {
     status = 'permission_required';

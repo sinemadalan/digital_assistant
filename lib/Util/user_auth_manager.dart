@@ -182,7 +182,6 @@ Future<EnrollResult> skipEnrollWithKeyForDebug(
   if (await checkIfTokenExists()) {
     return EnrollResult.duplicateEnrollment;
   }
-  print("Token: $token");
   await writeTokenIfNotExist(token);
 
   return EnrollResult.success;

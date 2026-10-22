@@ -164,6 +164,20 @@ class NotificationDeliveryCoordinatorTest {
         assertEquals(listOf("save:1"), f.events)
     }
 
+
+    @Test fun changedSessionSavesFetchedDataWithoutOsOrAckSideEffects() = runTest {
+        val f = Fixture()
+        val coordinator = NotificationDeliveryCoordinator(
+            f.store,
+            StoredNotificationPresenter { fail("Stale session must not display"); true },
+            NotificationAcknowledger { _, _ -> fail("Stale session must not ack"); NotificationsApiResult.Success(Unit) },
+            sessionIsCurrent = { false },
+        )
+        assertEquals(NotificationDeliveryStatus.SESSION_CHANGED,
+            coordinator.processFetched("token", listOf(incoming(1))).status)
+        assertEquals(listOf("save:1"), f.events)
+        assertEquals(1, f.store.pendingDisplay().size)
+    }
     @Test fun staleDeviceHandleFailsClosed() = runTest {
         val f = Fixture()
         f.store.ownerChanged = true

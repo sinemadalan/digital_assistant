@@ -18,6 +18,9 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -114,6 +117,29 @@ class NativeTokenStore internal constructor(
                 preferences.remove(KEY_IV)
             }
         }
+    }
+
+    /** Reactive state shared across all NativeTokenStore instances in this process. Never log these tokens. */
+    val tokenChanges: Flow<String?>
+        get() = dataStore.data.map { getToken() }.distinctUntilChanged()
+
+    val reauthenticationChanges: Flow<Boolean>
+        get() = dataStore.data.map { it[KEY_TOKEN_REVOKED] == true }.distinctUntilChanged()
+
+    /** A late unauthorized response may revoke only the token used for that request. */
+    suspend fun clearTokenIfMatches(expectedToken: String): Boolean = nativeTokenStoreMutex.withLock {
+        val preferences = dataStore.data.first()
+        if (preferences[KEY_TOKEN_REVOKED] != false) return@withLock false
+        val ciphertext = preferences[KEY_CIPHERTEXT] ?: return@withLock false
+        val iv = preferences[KEY_IV] ?: return@withLock false
+        val currentToken = withContext(Dispatchers.IO) { tokenCipher.decrypt(ciphertext, iv) }
+        if (currentToken != expectedToken) return@withLock false
+        dataStore.edit {
+            it[KEY_TOKEN_REVOKED] = true
+            it.remove(KEY_CIPHERTEXT)
+            it.remove(KEY_IV)
+        }
+        true
     }
 
     suspend fun hasToken(): Boolean = getToken() != null

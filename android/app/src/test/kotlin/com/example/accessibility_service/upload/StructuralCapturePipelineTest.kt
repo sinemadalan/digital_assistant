@@ -82,7 +82,7 @@ class StructuralCapturePipelineTest {
             val coordinator = UploadCoordinator(
                 tokenStore = object : UploadTokenStore {
                     override suspend fun getToken() = "test-token"
-                    override suspend fun revokeToken() = error("Unexpected token revocation")
+                    override suspend fun revokeToken(expectedToken: String) = error("Unexpected token revocation")
                 },
                 queue = object : UploadEventQueue {
                     override suspend fun peekBatch(maxCount: Int) = queue.peekBatch(maxCount)

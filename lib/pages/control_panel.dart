@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../Util/accessibility_service_manager.dart';
+import '../Util/user_auth_manager.dart' as auth;
+import 'login_page.dart';
 
 class ControlPanel extends StatefulWidget {
   const ControlPanel({super.key});
@@ -12,6 +15,8 @@ class ControlPanel extends StatefulWidget {
 class _ControlPanelState extends State<ControlPanel>
     with WidgetsBindingObserver {
   bool _isPaused = false;
+  bool _reauthenticationRequired = false;
+  StreamSubscription<bool>? _authSubscription;
   bool _permissionBusy = false;
   String _notificationAvailability = 'checking';
 
@@ -20,10 +25,15 @@ class _ControlPanelState extends State<ControlPanel>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _refreshNotificationAvailability();
+    _authSubscription = AccessibilityManager.reauthenticationRequiredStream
+        .listen((required) {
+          if (mounted) setState(() => _reauthenticationRequired = required);
+        }, onError: (_) {});
   }
 
   @override
   void dispose() {
+    _authSubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -39,6 +49,25 @@ class _ControlPanelState extends State<ControlPanel>
       if (mounted) setState(() => _notificationAvailability = state);
     } catch (_) {
       if (mounted) setState(() => _notificationAvailability = 'unavailable');
+    }
+  }
+
+  Future<void> _reenroll() async {
+    try {
+      await auth.deleteTokenFromSecureStorage();
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute<void>(builder: (_) => const LoginPage()),
+        (_) => false,
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Cihaz kaydı yenilenemedi. Tekrar deneyin.'),
+          ),
+        );
+      }
     }
   }
 
@@ -129,6 +158,23 @@ class _ControlPanelState extends State<ControlPanel>
                       ),
                     ),
                   const SizedBox(height: 24),
+                  if (_reauthenticationRequired)
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          children: [
+                            const Text(
+                              'Cihaz bağlantısı geçersiz. Yeni bir eşleştirme koduyla tekrar bağlanın.',
+                            ),
+                            TextButton(
+                              onPressed: _reenroll,
+                              child: const Text('Yeniden eşleştir'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(16),

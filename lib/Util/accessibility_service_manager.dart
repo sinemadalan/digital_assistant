@@ -14,6 +14,13 @@ class AccessibilityManager {
     return _eventChannel.receiveBroadcastStream().map((event) => event as bool);
   }
 
+  static const EventChannel _authEventChannel = EventChannel(
+    'com.your.package/auth_status',
+  );
+
+  static Stream<bool> get reauthenticationRequiredStream =>
+      _authEventChannel.receiveBroadcastStream().map((event) => event as bool);
+
   /// Tells the native side to pause (stop listening to events) or resume.
   static Future<void> setPaused(bool pause) async {
     await _methodChannel.invokeMethod('setPaused', {'pause': pause});

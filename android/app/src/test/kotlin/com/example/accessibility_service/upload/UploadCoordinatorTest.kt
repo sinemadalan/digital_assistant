@@ -377,6 +377,34 @@ class UploadCoordinatorTest {
         assertEquals(0, sender.postedNotifications.size)
     }
 
+
+    @Test
+    fun successfulHttpUploadTriggersNotificationCheckWithoutDependingOnQueueAck() = runTest {
+        var triggers = 0
+        val coordinator = UploadCoordinator(
+            FakeTokenStore("token"), FakeQueue(batchOf(capture()), AcknowledgeResult.Stale),
+            FakeClient(success()), onSuccessfulUpload = { triggers++ },
+        )
+        assertTrue(coordinator.requestUpload() is UploadOutcome.AckConflict)
+        assertEquals(1, triggers)
+    }
+
+    @Test
+    fun notificationTriggerFailureDoesNotFailCaptureUploadAndRejectedUploadDoesNotTrigger() = runTest {
+        val successCoordinator = UploadCoordinator(
+            FakeTokenStore("token"), FakeQueue(batchOf(capture())), FakeClient(success()),
+            onSuccessfulUpload = { error("Notification trigger failed") },
+        )
+        assertTrue(successCoordinator.requestUpload() is UploadOutcome.Uploaded)
+        var triggers = 0
+        val failedCoordinator = UploadCoordinator(
+            FakeTokenStore("token"), FakeQueue(batchOf(capture())), FakeClient(CapturesApiResult.Unauthorized),
+            onSuccessfulUpload = { triggers++ },
+        )
+        assertEquals(UploadOutcome.TokenRevoked, failedCoordinator.requestUpload())
+        assertEquals(0, triggers)
+    }
+
     private fun coordinator(
         tokenStore: FakeTokenStore,
         queue: FakeQueue,
@@ -432,7 +460,7 @@ private class FakeTokenStore(initialToken: String?) : UploadTokenStore {
         return token
     }
 
-    override suspend fun revokeToken() {
+    override suspend fun revokeToken(expectedToken: String) {
         revokeCalls += 1
         token = null
         reauthenticationRequired = true

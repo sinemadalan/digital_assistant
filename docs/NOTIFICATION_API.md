@@ -1,4 +1,4 @@
-# Device notification integration: stages 1-3
+# Device notification integration: stages 1-4
 
 The current backend contract is `notification-contract.md`. It delivers notifications
 through `GET /v1/notifications/pending`, independently of upload responses.
@@ -36,14 +36,19 @@ The delivery coordinator now saves fetched batches, presents with stable Android
 IDs and persists receipt transitions before calling the ack API. It retries
 previously saved acknowledgements without redisplaying their notifications.
 The Flutter panel reports permission/channel state and offers notification settings.
-See [NOTIFICATION_DELIVERY.md](NOTIFICATION_DELIVERY.md) for lifecycle and test details.
+See [NOTIFICATION_POLLING.md](NOTIFICATION_POLLING.md) for delivery, lifecycle and test details.
 
-## Integration boundary
+## Automatic polling (stage 4)
 
-No live pending fetch or polling timer is activated. The next stage must bind the
-current enrollment identity/token, check capacity before each GET, connect upload
-and periodic triggers, and schedule retries/cleanup. The old embedded upload-alert
-integration remains unchanged for now.
+The accessibility service now starts one device-scoped poller. Startup, periodic
+30-60-second jittered intervals, successful capture uploads and permission recovery
+feed the same serialized actor. Token changes cancel the old session; 401 stops
+polling and requests reenrollment. Capacity preflight, page draining, retries,
+Retry-After and cleanup are connected.
+See [NOTIFICATION_POLLING.md](NOTIFICATION_POLLING.md) for operation and validation.
+
+The legacy embedded-alert parser remains available, but the capture service uses
+the separate pending/ack inbox contract. Automated checks never fetch the live inbox.
 
 ## Verification
 
