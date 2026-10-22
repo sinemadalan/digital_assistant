@@ -318,11 +318,71 @@ class UploadCoordinatorTest {
         assertEquals(1, queue.acknowledgeCalls)
     }
 
+    @Test
+    fun forwardsServerAlertToNotificationManagerOnSuccess() = runTest {
+        val queue = FakeQueue(batchOf(capture()))
+        val alert = com.example.accessibility_service.networking.ServerAlertResponse(
+            title = "Warning",
+            message = "Unusual screen content",
+            alertType = "CONTENT_ALERT",
+            metadata = mapOf("score" to "0.95"),
+        )
+        val successResult = CapturesApiResult.Success(
+            CapturesResponse(
+                accepted = 1,
+                skipped = 0,
+                config = CapturesConfig(30, 20),
+                commands = emptyList(),
+                alert = alert,
+            )
+        )
+        val client = FakeClient(successResult)
+        val sender = FakeNotificationSender()
+        val notificationManager = com.example.accessibility_service.notification.AppNotificationManager(sender)
+
+        val coordinator = coordinator(
+            FakeTokenStore("token"),
+            queue,
+            client,
+            notificationManager = notificationManager,
+        )
+
+        val outcome = coordinator.requestUpload()
+        assertTrue(outcome is UploadOutcome.Uploaded)
+        assertEquals(1, sender.postedNotifications.size)
+        val posted = sender.postedNotifications.first()
+        assertEquals(com.example.accessibility_service.notification.NotificationType.SERVER_ALERT, posted.type)
+        assertEquals("Warning", posted.title)
+        assertEquals("Unusual screen content", posted.message)
+        assertEquals("CONTENT_ALERT", posted.payload["alertType"])
+        assertEquals("0.95", posted.payload["score"])
+    }
+
+    @Test
+    fun doesNotPostNotificationWhenAlertIsNull() = runTest {
+        val queue = FakeQueue(batchOf(capture()))
+        val client = FakeClient(success())
+        val sender = FakeNotificationSender()
+        val notificationManager = com.example.accessibility_service.notification.AppNotificationManager(sender)
+
+        val coordinator = coordinator(
+            FakeTokenStore("token"),
+            queue,
+            client,
+            notificationManager = notificationManager,
+        )
+
+        val outcome = coordinator.requestUpload()
+        assertTrue(outcome is UploadOutcome.Uploaded)
+        assertEquals(0, sender.postedNotifications.size)
+    }
+
     private fun coordinator(
         tokenStore: FakeTokenStore,
         queue: FakeQueue,
         client: FakeClient,
-    ) = UploadCoordinator(tokenStore, queue, client)
+        notificationManager: com.example.accessibility_service.notification.AppNotificationManager? = null,
+    ) = UploadCoordinator(tokenStore, queue, client, notificationManager = notificationManager)
 
     private fun success(
         accepted: Int = 1,
@@ -415,4 +475,20 @@ private class FakeClient(
         lastCaptures = captures
         return response(token, captures)
     }
+}
+
+private class FakeNotificationSender(
+    var allowSend: Boolean = true,
+) : com.example.accessibility_service.notification.AppNotificationSender {
+    val postedNotifications = mutableListOf<com.example.accessibility_service.notification.AppNotification>()
+
+    override fun canSendNotifications(): Boolean = allowSend
+
+    override fun show(notification: com.example.accessibility_service.notification.AppNotification): Boolean {
+        if (!canSendNotifications()) return false
+        postedNotifications.add(notification)
+        return true
+    }
+
+    override fun cancel(id: Int) {}
 }

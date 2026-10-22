@@ -66,6 +66,7 @@ internal object CapturesResponseParser {
 
         val config = root.requiredObject("config")
         val commands = root.requiredArray("commands")
+        val alert = root.optJSONObject("alert")?.let(::parseAlert)
         return CapturesResponse(
             accepted = accepted,
             skipped = skipped,
@@ -76,6 +77,40 @@ internal object CapturesResponseParser {
             commands = List(commands.length()) { index ->
                 RawCaptureCommand(commands.get(index).toRawJson())
             },
+            alert = alert,
+        )
+    }
+
+    private fun parseAlert(alertObj: JSONObject): ServerAlertResponse {
+        val title = alertObj.optString("title", "").ifBlank {
+            alertObj.optString("type", "Detection Alert")
+        }
+        val message = alertObj.optString("message", "").ifBlank {
+            alertObj.optString("description", "Content classification detected an alert.")
+        }
+        val alertType = if (alertObj.has("alert_type") && !alertObj.isNull("alert_type")) {
+            alertObj.optString("alert_type")
+        } else if (alertObj.has("type") && !alertObj.isNull("type")) {
+            alertObj.optString("type")
+        } else {
+            null
+        }
+
+        val metadata = mutableMapOf<String, String>()
+        val metadataObj = alertObj.optJSONObject("metadata")
+        if (metadataObj != null) {
+            val keys = metadataObj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                metadata[key] = metadataObj.optString(key)
+            }
+        }
+
+        return ServerAlertResponse(
+            title = title,
+            message = message,
+            alertType = alertType,
+            metadata = metadata,
         )
     }
 

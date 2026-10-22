@@ -5,6 +5,14 @@ data class CapturesResponse(
     val skipped: Int,
     val config: CapturesConfig,
     val commands: List<RawCaptureCommand>,
+    val alert: ServerAlertResponse? = null,
+)
+
+data class ServerAlertResponse(
+    val title: String,
+    val message: String,
+    val alertType: String? = null,
+    val metadata: Map<String, String> = emptyMap(),
 )
 
 data class CapturesConfig(

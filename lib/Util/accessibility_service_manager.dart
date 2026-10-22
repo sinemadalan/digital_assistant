@@ -57,4 +57,9 @@ class AccessibilityManager {
   static Future<void> clearAuthToken() async {
     await _methodChannel.invokeMethod('clearAuthToken');
   }
+
+  /// Sends a local test notification with "Hello notification" message.
+  static Future<bool> testLocalNotification() async {
+    return await _methodChannel.invokeMethod<bool>('testLocalNotification') ?? false;
+  }
 }
