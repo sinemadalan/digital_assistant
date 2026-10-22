@@ -340,6 +340,53 @@ class PersistentNotificationStoreTest {
         }
     }
 
+
+    @Test
+    fun deliveryPipelineRestoresAckAfterRestartWithoutShowingDuplicate() = runTest {
+        val first = open()
+        val n = notification(1)
+        val presentedIds = mutableListOf<Int>()
+        val sender = object : AppNotificationSender {
+            override fun canSendNotifications() = true
+            override fun show(notification: AppNotification): Boolean {
+                presentedIds.add(notification.id)
+                return true
+            }
+            override fun cancel(id: Int) = Unit
+        }
+        var ackStatus = 503
+        val ackPaths = mutableListOf<String>()
+        val transport = object : com.example.accessibility_service.networking.NotificationsHttpTransport {
+            override fun execute(method: String, path: String, token: String):
+                com.example.accessibility_service.networking.NotificationsHttpResponse {
+                assertEquals("POST", method)
+                assertEquals("device-token", token)
+                ackPaths.add(path)
+                return com.example.accessibility_service.networking.NotificationsHttpResponse(ackStatus)
+            }
+        }
+        val api = com.example.accessibility_service.networking.NotificationsApiClient(
+            transport, kotlinx.coroutines.test.StandardTestDispatcher(testScheduler),
+        )
+        val manager = AppNotificationManager(sender)
+        val coordinator = NotificationDeliveryCoordinator(first.store, manager, api, nowMillis = { now })
+        assertEquals(NotificationDeliveryStatus.RETRYABLE_FAILURE,
+            coordinator.processFetched("device-token", listOf(n)).status)
+        assertEquals(1, first.store.pendingAcknowledgements().size)
+        first.close()
+
+        val reopened = open(first.file)
+        ackStatus = 204
+        val resumed = NotificationDeliveryCoordinator(reopened.store, manager, api, nowMillis = { now })
+        assertEquals(1, resumed.resumePending("device-token").acknowledged)
+        resumed.processFetched("device-token", listOf(n))
+        assertEquals(1, presentedIds.size)
+        assertEquals(listOf("/v1/notifications/${n.id}/ack", "/v1/notifications/${n.id}/ack"), ackPaths)
+        assertEquals(1, reopened.store.stats().completed)
+        assertTrue(reopened.store.pendingDisplay().isEmpty())
+        assertTrue(reopened.store.pendingAcknowledgements().isEmpty())
+    }
+
     private suspend fun open(
         file: File = File(temporaryFolder.root, UUID.randomUUID().toString() + ".json"),
         deviceId: String = DEVICE_ONE,

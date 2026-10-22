@@ -18,6 +18,8 @@ class AppNotificationManager(
      */
     fun canPostNotifications(): Boolean = sender.canSendNotifications()
 
+    fun availability(type: NotificationType): NotificationAvailability = sender.availability(type)
+
     /**
      * Sends a Server Detection Alert notification (Phase 1).
      *

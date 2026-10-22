@@ -3,14 +3,69 @@ import 'package:flutter/material.dart';
 import '../Util/accessibility_service_manager.dart';
 
 class ControlPanel extends StatefulWidget {
-  const ControlPanel({Key? key}) : super(key: key);
+  const ControlPanel({super.key});
 
   @override
-  _ControlPanelState createState() => _ControlPanelState();
+  State<ControlPanel> createState() => _ControlPanelState();
 }
 
-class _ControlPanelState extends State<ControlPanel> {
+class _ControlPanelState extends State<ControlPanel>
+    with WidgetsBindingObserver {
   bool _isPaused = false;
+  bool _permissionBusy = false;
+  String _notificationAvailability = 'checking';
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _refreshNotificationAvailability();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refreshNotificationAvailability();
+  }
+
+  Future<void> _refreshNotificationAvailability() async {
+    try {
+      final state = await AccessibilityManager.notificationAvailability();
+      if (mounted) setState(() => _notificationAvailability = state);
+    } catch (_) {
+      if (mounted) setState(() => _notificationAvailability = 'unavailable');
+    }
+  }
+
+  Future<void> _configureNotifications() async {
+    setState(() => _permissionBusy = true);
+    try {
+      await AccessibilityManager.requestNotificationPermission();
+      await _refreshNotificationAvailability();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Bildirim ayarları açılamadı.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _permissionBusy = false);
+    }
+  }
+
+  String get _notificationMessage => switch (_notificationAvailability) {
+    'ready' => 'İçerik bildirimleri açık.',
+    'permission_required' => 'Bildirim göstermek için izin gerekiyor.',
+    'app_disabled' => 'Uygulama bildirimleri ayarlarda kapalı.',
+    'channel_disabled' => 'İçerik bildirimi kanalı kapalı.',
+    'checking' => 'Bildirim ayarları kontrol ediliyor…',
+    _ => 'Bildirim durumu kontrol edilemedi.',
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -21,124 +76,127 @@ class _ControlPanelState extends State<ControlPanel> {
         actions: [
           TextButton.icon(
             icon: const Icon(Icons.navigate_before),
-            label: const Text("Go back to login page"),
-            onPressed: () {
-              Navigator.pop(context);
-            },
+            label: const Text('Go back to login page'),
+            onPressed: () => Navigator.pop(context),
           ),
         ],
       ),
-      // The StreamBuilder is now at the top level of the body
-      // It passes the state down to a clean, declarative layout function
       body: StreamBuilder<bool>(
         stream: AccessibilityManager.serviceStatusStream,
         initialData: false,
         builder: (context, snapshot) {
           final isRunning = snapshot.data ?? false;
-          return _buildMainLayout(isRunning);
+          return Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    isRunning
+                        ? Icons.check_circle
+                        : Icons.warning_amber_rounded,
+                    color: isRunning ? Colors.green : Colors.red,
+                    size: 64,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    isRunning ? 'Service is ENABLED' : 'Service is DISABLED',
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 30),
+                  if (!isRunning)
+                    ElevatedButton.icon(
+                      onPressed: AccessibilityManager.openSettings,
+                      icon: const Icon(Icons.settings),
+                      label: const Text('Grant Permission in Settings'),
+                    )
+                  else
+                    Card(
+                      child: SwitchListTile(
+                        title: const Text('Pause Service (Save CPU)'),
+                        subtitle: const Text(
+                          'Stops listening to events without revoking permission',
+                        ),
+                        value: _isPaused,
+                        onChanged: (value) {
+                          setState(() => _isPaused = value);
+                          AccessibilityManager.setPaused(value);
+                        },
+                      ),
+                    ),
+                  const SizedBox(height: 24),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          Text(_notificationMessage),
+                          if (_notificationAvailability != 'ready' &&
+                              _notificationAvailability != 'checking')
+                            const Padding(
+                              padding: EdgeInsets.only(top: 8),
+                              child: Text(
+                                'Kaydedilmiş bildirimler izin açılana kadar bekler.',
+                              ),
+                            ),
+                          const SizedBox(height: 8),
+                          TextButton.icon(
+                            onPressed:
+                                _permissionBusy ||
+                                    _notificationAvailability == 'checking' ||
+                                    _notificationAvailability == 'unavailable'
+                                ? null
+                                : _configureNotifications,
+                            icon: const Icon(Icons.notifications_outlined),
+                            label: Text(
+                              _notificationAvailability == 'ready'
+                                  ? 'Bildirim ayarları'
+                                  : 'Bildirimleri aç',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    onPressed: _sendTestNotification,
+                    icon: const Icon(Icons.notifications_active),
+                    label: const Text('Test local notification'),
+                  ),
+                ],
+              ),
+            ),
+          );
         },
       ),
     );
   }
 
-  /// Organizes the main vertical structure of the screen.
-  Widget _buildMainLayout(bool isRunning) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          _buildStatusIndicator(isRunning),
-          const SizedBox(height: 30),
-          // Conditionally show either the settings button OR the pause toggle
-          if (!isRunning) _buildSettingsButton() else _buildPauseToggle(),
-          const SizedBox(height: 24),
-          _buildTestNotificationButton(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTestNotificationButton() {
-    return ElevatedButton.icon(
-      onPressed: _sendTestNotification,
-      icon: const Icon(Icons.notifications_active),
-      label: const Text('Test local notification'),
-      style: ElevatedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      ),
-    );
-  }
-
   Future<void> _sendTestNotification() async {
-    final posted = await AccessibilityManager.testLocalNotification();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          posted
-              ? 'Notification "Hello notification" sent!'
-              : 'Could not send notification (check permissions or notification settings)',
-        ),
-      ),
-    );
-  }
-
-  /// Visual feedback for the current system permission state.
-  Widget _buildStatusIndicator(bool isRunning) {
-    return Column(
-      children: [
-        Icon(
-          isRunning ? Icons.check_circle : Icons.warning_amber_rounded,
-          color: isRunning ? Colors.green : Colors.red,
-          size: 64,
-        ),
-        const SizedBox(height: 12),
-        Text(
-          isRunning ? 'Service is ENABLED' : 'Service is DISABLED',
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
-            color: isRunning ? Colors.green : Colors.red,
+    try {
+      final posted = await AccessibilityManager.testLocalNotification();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            posted
+                ? 'Test bildirimi gönderildi.'
+                : 'Bildirim gönderilemedi. İzin ve kanal ayarlarını kontrol edin.',
           ),
         ),
-      ],
-    );
-  }
-
-  /// Button to route the user to Android Settings.
-  Widget _buildSettingsButton() {
-    return ElevatedButton.icon(
-      onPressed: AccessibilityManager.openSettings,
-      icon: const Icon(Icons.settings),
-      label: const Text('Grant Permission in Settings'),
-      style: ElevatedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-      ),
-    );
-  }
-
-  /// The pause toggle, isolated in its own widget block.
-  Widget _buildPauseToggle() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-      child: Card(
-        child: ListTile(
-          title: const Text('Pause Service (Save CPU)'),
-          subtitle: const Text('Stops listening to events without revoking permission'),
-          trailing: Switch(
-            value: _isPaused,
-            onChanged: _handlePauseToggle,
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Handles the state update and native communication for pausing.
-  void _handlePauseToggle(bool value) {
-    setState(() {
-      _isPaused = value;
-    });
-    AccessibilityManager.setPaused(value);
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Test bildirimi gönderilemedi.')),
+        );
+      }
+    }
+    await _refreshNotificationAvailability();
   }
 }

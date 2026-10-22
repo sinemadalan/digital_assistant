@@ -1,4 +1,4 @@
-# Device notification API and storage: stages 1 and 2
+# Device notification integration: stages 1-3
 
 The current backend contract is `notification-contract.md`. It delivers notifications
 through `GET /v1/notifications/pending`, independently of upload responses.
@@ -30,14 +30,20 @@ expired entries. Completed messages become minimal ID tombstones.
 See [NOTIFICATION_STORAGE.md](NOTIFICATION_STORAGE.md) for the state machine,
 7-day/24-hour retention, 10,000-record/8-MiB limits and capacity preflight.
 
+## Delivery and permissions (stage 3)
+
+The delivery coordinator now saves fetched batches, presents with stable Android
+IDs and persists receipt transitions before calling the ack API. It retries
+previously saved acknowledgements without redisplaying their notifications.
+The Flutter panel reports permission/channel state and offers notification settings.
+See [NOTIFICATION_DELIVERY.md](NOTIFICATION_DELIVERY.md) for lifecycle and test details.
+
 ## Integration boundary
 
-There is still no live fetch, polling timer, network retry loop, token mutation
-or connection to Android presentation. Each API call performs at most one request.
-Before connecting the API to the existing notification manager, wire the single
-coordinator to check capacity before every fetch, persist before display, reuse
-stable Android IDs and acknowledge only after Android accepts delivery.
-The old embedded upload-alert integration remains unchanged for now.
+No live pending fetch or polling timer is activated. The next stage must bind the
+current enrollment identity/token, check capacity before each GET, connect upload
+and periodic triggers, and schedule retries/cleanup. The old embedded upload-alert
+integration remains unchanged for now.
 
 ## Verification
 

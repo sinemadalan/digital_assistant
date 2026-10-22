@@ -61,10 +61,10 @@ DataStore's atomic update keeps the previous snapshot on a failed write.
 
 ## Integration boundary
 
-No polling timer, network retry loop, permission request or Android presentation
-is activated in this stage. The old embedded upload-alert path is unchanged.
-Next: wire the single coordinator, stable-ID presentation, permissions/channel
-status, device identity from enrollment, cleanup and backoff scheduling.
+The store performs no network or Android side effects itself.
+[Stage 3](NOTIFICATION_DELIVERY.md) adds durable delivery, stable-ID presentation
+and the permission panel. Next: activate the single poll coordinator, enrollment
+identity, cleanup and backoff scheduling.
 
 The server still has an at-most-once fetch boundary: losing a response before
 local persistence cannot be repaired by this store or by an ack retry.

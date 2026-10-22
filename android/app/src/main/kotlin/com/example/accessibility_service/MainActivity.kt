@@ -125,20 +125,89 @@ class MainActivity : FlutterActivity(){
                     "testLocalNotification" -> {
                         try {
                             val manager = com.example.accessibility_service.notification.AppNotificationManager.getInstance(applicationContext)
-                            val posted = manager.notifyServerAlert(
+                            val posted = manager.notify(com.example.accessibility_service.notification.AppNotification(
+                                id = manager.nextNotificationId(),
+                                type = com.example.accessibility_service.notification.NotificationType.CLASSIFICATION_ALERT,
                                 title = "Test Notification",
                                 message = "Hello notification",
-                                alertType = "TEST_ALERT",
-                            )
+                                onlyAlertOnce = true,
+                            ))
                             result.success(posted)
                         } catch (e: Exception) {
                             result.error("NOTIFICATION_ERROR", "Failed to send test notification: ${e.message}", null)
                         }
                     }
+                    "notificationAvailability" -> {
+                        val manager = com.example.accessibility_service.notification.AppNotificationManager.getInstance(applicationContext)
+                        result.success(manager.availability(
+                            com.example.accessibility_service.notification.NotificationType.CLASSIFICATION_ALERT,
+                        ).wireValue)
+                    }
+                    "requestNotificationPermission" -> requestNotificationPermission(result)
                     else -> result.notImplemented()
                 }
             }
     }
+
+
+    private var notificationPermissionResult: MethodChannel.Result? = null
+
+    private fun requestNotificationPermission(result: MethodChannel.Result) {
+        if (notificationPermissionResult != null) {
+            result.error("PERMISSION_IN_PROGRESS", "A permission request is already active.", null)
+            return
+        }
+        val manager = com.example.accessibility_service.notification.AppNotificationManager.getInstance(applicationContext)
+        val state = manager.availability(com.example.accessibility_service.notification.NotificationType.CLASSIFICATION_ALERT)
+        // Older targets cannot control Android 13's notification permission prompt; settings remain usable.
+        if (android.os.Build.VERSION.SDK_INT >= 33 && applicationInfo.targetSdkVersion >= 33 &&
+            state == com.example.accessibility_service.notification.NotificationAvailability.PERMISSION_REQUIRED
+        ) {
+            notificationPermissionResult = result
+            try {
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST)
+            } catch (_: Exception) {
+                notificationPermissionResult = null
+                result.error("PERMISSION_ERROR", "Unable to request notification permission.", null)
+            }
+            return
+        }
+        try {
+            val intent = if (android.os.Build.VERSION.SDK_INT >= 26) {
+                val channelBlocked = state == com.example.accessibility_service.notification.NotificationAvailability.CHANNEL_DISABLED
+                Intent(if (channelBlocked) Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS else Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                    .apply {
+                        if (channelBlocked) putExtra(
+                            Settings.EXTRA_CHANNEL_ID,
+                            com.example.accessibility_service.notification.NotificationType.CLASSIFICATION_ALERT.channelId,
+                        )
+                    }
+            } else {
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName"))
+            }
+            startActivity(intent)
+            result.success(null)
+        } catch (_: Exception) {
+            result.error("SETTINGS_ERROR", "Unable to open notification settings.", null)
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == NOTIFICATION_PERMISSION_REQUEST) {
+            notificationPermissionResult?.success(null)
+            notificationPermissionResult = null
+        }
+    }
+
+    override fun onDestroy() {
+        notificationPermissionResult?.error("ACTIVITY_CLOSED", "Permission request was interrupted.", null)
+        notificationPermissionResult = null
+        super.onDestroy()
+    }
+
+    private companion object { const val NOTIFICATION_PERMISSION_REQUEST = 8401 }
 
     private fun openAccessibilitySettings() {
         try {
