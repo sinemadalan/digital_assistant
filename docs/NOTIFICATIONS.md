@@ -1,3 +1,5 @@
+> Current backend contract uses a separate pending/ack inbox, not embedded upload alerts. See [NOTIFICATION_API.md](NOTIFICATION_API.md) for the API client, durable inbox and remaining integration work.
+
 # Notification System (Phase 1 & Phase 2 Architecture)
 
 This document provides a comprehensive guide for teammates working on or extending the notification system in `digital_assistant`.
