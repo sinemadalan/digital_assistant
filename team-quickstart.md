@@ -1,0 +1,5 @@
+# Notification stream quickstart
+
+The accessibility service opens `GET /v1/notifications/stream` with the enrolled device JWT. A `ready` or `notification` SSE event calls `NotificationPollingController.requestPoll()`. The existing `NotificationInboxCycle` remains the only code that fetches, displays, and acknowledges inbox rows. Heartbeat comments keep the connection active without polling. Polling waits 15 minutes while the stream is connected and returns to a 30–60 second fallback after disconnection. A 401 revokes only the token used by that stream and requires re-enrollment.
+
+To verify on an emulator, make sure the emulator can reach `https://api.152-70-40-87.nip.io`. Enroll the device, enable the accessibility service, and inspect `adb logcat -s NotificationStream Notifications`. `NotificationStream` logs `connect`, `ready`, `notification`, `disconnect`, and `backoff <milliseconds>ms`; it never logs tokens or event data. `Notifications` reports poll state and delivery counts. Stop the service or remove its enrollment to confirm the stream closes.

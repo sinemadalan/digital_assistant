@@ -5,6 +5,7 @@ import android.os.SystemClock
 import android.util.Log
 import com.example.accessibility_service.NativeTokenStore
 import com.example.accessibility_service.networking.NotificationsApiClient
+import com.example.accessibility_service.networking.UrlConnectionNotificationStreamTransport
 import com.example.accessibility_service.networking.NotificationsApiResult
 import com.example.accessibility_service.networking.ServerNotification
 import kotlinx.coroutines.CoroutineScope
@@ -55,6 +56,21 @@ internal fun notificationPollingController(
         invalidateToken = { tokens.clearTokenIfMatches(it) },
         nowMillis = SystemClock::elapsedRealtime,
         report = { Log.i("Notifications", "Notifications: state=${it.name}") },
+    )
+}
+
+internal fun notificationStreamRunner(
+    context: Context,
+    scope: CoroutineScope,
+    polling: NotificationPollingController,
+): NotificationStreamRunner {
+    val tokens = NativeTokenStore(context.applicationContext)
+    return NotificationStreamRunner(
+        scope = scope,
+        tokens = tokens.tokenChanges,
+        transport = UrlConnectionNotificationStreamTransport(),
+        polling = polling,
+        invalidateToken = { tokens.clearTokenIfMatches(it) },
     )
 }
 

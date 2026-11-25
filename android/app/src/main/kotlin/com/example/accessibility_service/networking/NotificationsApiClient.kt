@@ -42,7 +42,7 @@ class NotificationsApiClient internal constructor(
         successStatus: Int,
         parse: (NotificationsHttpResponse) -> T,
     ): NotificationsApiResult<T> {
-        if (token.isNullOrBlank() || token.any { it == '\r' || it == '\n' }) {
+        if (!isValidNotificationToken(token)) {
             return NotificationsApiResult.InvalidRequest(NotificationRequestError.INVALID_TOKEN)
         }
         return withContext(ioDispatcher) {
@@ -65,16 +65,8 @@ class NotificationsApiClient internal constructor(
                 } catch (_: java.time.format.DateTimeParseException) {
                     NotificationsApiResult.InvalidResponse
                 }
-                response.statusCode == 401 -> NotificationsApiResult.Unauthorized
-                response.statusCode == 404 -> NotificationsApiResult.NotFound
-                response.statusCode == 429 || response.statusCode in 500..599 ->
-                    NotificationsApiResult.RetryableHttpError(
-                        response.statusCode,
-                        parseRetryAfter(response.retryAfter, nowMillis()),
-                    )
-                response.statusCode in 400..499 -> NotificationsApiResult.ClientHttpError(response.statusCode)
                 response.statusCode in 200..299 -> NotificationsApiResult.InvalidResponse
-                else -> NotificationsApiResult.UnexpectedHttpError(response.statusCode)
+                else -> classifyNotificationHttpError(response.statusCode, response.retryAfter, nowMillis())
             }
         }
     }
@@ -87,6 +79,22 @@ class NotificationsApiClient internal constructor(
         const val READ_TIMEOUT_MS = 30_000
         const val MAX_RESPONSE_BYTES = 1024 * 1024
     }
+}
+
+internal fun isValidNotificationToken(token: String?): Boolean =
+    !token.isNullOrBlank() && token.none { it == '\r' || it == '\n' }
+
+internal fun classifyNotificationHttpError(
+    status: Int,
+    retryAfter: String?,
+    nowMillis: Long,
+): NotificationsApiResult<Nothing> = when {
+    status == 401 -> NotificationsApiResult.Unauthorized
+    status == 404 -> NotificationsApiResult.NotFound
+    status == 429 || status in 500..599 ->
+        NotificationsApiResult.RetryableHttpError(status, parseRetryAfter(retryAfter, nowMillis))
+    status in 400..499 -> NotificationsApiResult.ClientHttpError(status)
+    else -> NotificationsApiResult.UnexpectedHttpError(status)
 }
 
 internal fun isCanonicalNotificationId(value: String): Boolean =
