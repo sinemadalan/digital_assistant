@@ -244,6 +244,60 @@ class NotificationPollingControllerTest {
             assertTrue(notificationRetryDelay(attempt) in base..minOf(base + base / 4, 60_000))
         }
     }
+
+    @Test fun connectedWaitIsFifteenMinutesAndExternalWakesConflate() = runTest {
+        val f = PollFixture(this)
+        f.controller.start(); runCurrent()
+        f.controller.setStreamConnected(true, "token")
+        f.controller.requestPoll(); runCurrent() // ready event
+        assertEquals(2, f.calls.size)
+        advanceTimeBy(899_999); runCurrent()
+        assertEquals(2, f.calls.size)
+        repeat(100) { f.controller.requestPoll() }
+        runCurrent()
+        assertEquals(3, f.calls.size)
+        advanceTimeBy(899_999); runCurrent()
+        assertEquals(3, f.calls.size)
+        advanceTimeBy(1); runCurrent()
+        assertEquals(4, f.calls.size)
+    }
+
+    @Test fun disconnectShortensConnectedWaitToFallbackInterval() = runTest {
+        val f = PollFixture(this)
+        f.controller.start(); runCurrent()
+        f.controller.setStreamConnected(true, "token")
+        f.controller.requestPoll(); runCurrent()
+        advanceTimeBy(100_000); runCurrent()
+        assertEquals(2, f.calls.size)
+        f.controller.setStreamConnected(false, "token"); runCurrent()
+        advanceTimeBy(29_999); runCurrent()
+        assertEquals(2, f.calls.size)
+        advanceTimeBy(1); runCurrent()
+        assertEquals(3, f.calls.size)
+    }
+
+    @Test fun tokenReplacementResetsStreamConnection() = runTest {
+        val f = PollFixture(this)
+        f.controller.start(); runCurrent()
+        f.controller.setStreamConnected(true, "token")
+        f.controller.requestPoll(); runCurrent()
+        f.tokens.value = "new-token"; runCurrent()
+        f.controller.setStreamConnected(false, "token") // old stream's late disconnect
+        advanceTimeBy(30_000); runCurrent()
+        assertEquals(listOf("token", "token", "new-token", "new-token"), f.calls.map { it.first })
+    }
+
+    @Test fun externalWakeCannotBypassProtectedRetryAfterWhileConnected() = runTest {
+        val f = PollFixture(this)
+        f.cycle = { NotificationPollResult(NotificationPollStatus.RETRY, 80_000) }
+        f.controller.start(); runCurrent()
+        f.controller.setStreamConnected(true, "token")
+        repeat(100) { f.controller.requestPoll() }
+        advanceTimeBy(79_999); runCurrent()
+        assertEquals(1, f.calls.size)
+        advanceTimeBy(1); runCurrent()
+        assertEquals(2, f.calls.size)
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)

@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.selects.select
 import kotlin.random.Random
 
 internal enum class NotificationPollStatus {
@@ -46,6 +47,10 @@ internal class NotificationPollingController(
 ) {
     private val active = MutableStateFlow(false)
     private val triggers = Channel<Unit>(Channel.CONFLATED)
+    private val scheduleChanges = Channel<Unit>(Channel.CONFLATED)
+    private val streamLock = Any()
+    private var sessionToken: String? = null
+    private var streamConnected = false
     @Volatile private var closed = false
     private val runner: Job = scope.launch {
         val recoverableTokens = tokens.retryWhen { error, _ ->
@@ -62,21 +67,43 @@ internal class NotificationPollingController(
     }
 
     fun start() { if (!closed) active.value = true }
-    fun stop() { active.value = false }
+    fun stop() {
+        active.value = false
+        synchronized(streamLock) { streamConnected = false; sessionToken = null }
+        scheduleChanges.trySend(Unit)
+    }
     fun requestPoll() { if (!closed && active.value) triggers.trySend(Unit) }
+    fun setStreamConnected(connected: Boolean) {
+        synchronized(streamLock) {
+            if (closed || !active.value || sessionToken == null || streamConnected == connected) return
+            streamConnected = connected
+        }
+        scheduleChanges.trySend(Unit)
+    }
+
+    /** Ignore a late disconnect from a stream belonging to an older enrollment. */
+    fun setStreamConnected(connected: Boolean, token: String) {
+        synchronized(streamLock) {
+            if (closed || !active.value || sessionToken != token || streamConnected == connected) return
+            streamConnected = connected
+        }
+        scheduleChanges.trySend(Unit)
+    }
     fun close() {
         closed = true
         active.value = false
         runner.cancel()
         triggers.close()
+        scheduleChanges.close()
     }
 
     private suspend fun runSession(token: String) {
+        synchronized(streamLock) { sessionToken = token; streamConnected = false }
         var session: NotificationPollSession? = null
         var attempt = 0
         var waitMillis = 0L
         var protectBackoff = false
-        while (true) {
+        try { while (true) {
             awaitWindow(waitMillis, protectBackoff)
             currentCoroutineContext().ensureActive()
             // Requests already queued before this cycle are covered by this cycle.
@@ -112,26 +139,42 @@ internal class NotificationPollingController(
                 }
                 else -> {
                     attempt = 0
-                    waitMillis = normalDelayMillis().coerceIn(30_000, 60_000)
+                    waitMillis = if (isStreamConnected()) 15 * 60_000L
+                        else normalDelayMillis().coerceIn(30_000, 60_000)
                     // Upload/permission bursts may not bypass a storage failure or capacity pause.
                     protectBackoff = result.status == NotificationPollStatus.STORAGE_ERROR ||
                         result.status == NotificationPollStatus.NO_CAPACITY
                 }
             }
+        } } finally {
+            synchronized(streamLock) {
+                if (sessionToken == token) { sessionToken = null; streamConnected = false }
+            }
         }
     }
 
+    private fun isStreamConnected(): Boolean = synchronized(streamLock) { streamConnected }
+
     private suspend fun awaitWindow(waitMillis: Long, ignoreTriggers: Boolean) {
-        val start = nowMillis()
+        var start = nowMillis()
+        var duration = waitMillis
         while (true) {
             val elapsed = (nowMillis() - start).coerceAtLeast(0)
-            val remaining = waitMillis - elapsed
+            val remaining = duration - elapsed
             if (remaining <= 0) return
-            val triggered = withTimeoutOrNull(remaining) {
-                triggers.receive()
-                true
-            } ?: false
-            if (!triggered || !ignoreTriggers) return
+            when (withTimeoutOrNull(remaining) {
+                select<Int> {
+                    triggers.onReceiveCatching { 1 }
+                    scheduleChanges.onReceiveCatching { 2 }
+                }
+            } ?: 0) {
+                0 -> return
+                1 -> if (!ignoreTriggers) return
+                2 -> if (!ignoreTriggers && duration == 15 * 60_000L && !isStreamConnected()) {
+                    start = nowMillis()
+                    duration = normalDelayMillis().coerceIn(30_000, 60_000)
+                }
+            }
         }
     }
 }
