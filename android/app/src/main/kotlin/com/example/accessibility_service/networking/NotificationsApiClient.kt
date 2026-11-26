@@ -42,7 +42,7 @@ class NotificationsApiClient internal constructor(
         successStatus: Int,
         parse: (NotificationsHttpResponse) -> T,
     ): NotificationsApiResult<T> {
-        if (!isValidNotificationToken(token)) {
+        if (token == null || !isValidNotificationToken(token)) {
             return NotificationsApiResult.InvalidRequest(NotificationRequestError.INVALID_TOKEN)
         }
         return withContext(ioDispatcher) {
