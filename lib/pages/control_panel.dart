@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:accessibility_service/pages/login_page.dart';
 import 'package:flutter/material.dart';
 
 import '../Util/accessibility_service_manager.dart';
@@ -105,8 +106,13 @@ class _ControlPanelState extends State<ControlPanel>
         actions: [
           TextButton.icon(
             icon: const Icon(Icons.navigate_before),
-            label: const Text('Go back to login page'),
-            onPressed: () => Navigator.pop(context),
+            label: const Text("Go back to login page"),
+            onPressed: () {
+              Navigator.pushReplacement(
+                  context,
+                MaterialPageRoute<void>(builder: (context) => const LoginPage()),
+              );
+            },
           ),
         ],
       ),

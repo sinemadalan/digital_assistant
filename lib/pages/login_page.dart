@@ -29,7 +29,7 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
-    Future<void> navigateToControlPanel() => Navigator.push(
+    Future<void> navigateToControlPanel() => Navigator.pushReplacement(
       context,
       MaterialPageRoute<void>(builder: (context) => const ControlPanel()),
     );

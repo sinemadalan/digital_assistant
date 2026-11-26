@@ -12,6 +12,8 @@ import kotlinx.coroutines.withContext
 private const val TAG = "CaptureA11yService"
 private const val HTTP_TIMEOUT_MS = 3_000
 
+
+@Deprecated("This is a leftover class from initial builds")
 class NetworkSyncManager(val IP: String){
 
     @RequiresApi(Build.VERSION_CODES.R)
