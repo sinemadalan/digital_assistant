@@ -14,6 +14,13 @@ class AccessibilityManager {
     return _eventChannel.receiveBroadcastStream().map((event) => event as bool);
   }
 
+  static const EventChannel _authEventChannel = EventChannel(
+    'com.your.package/auth_status',
+  );
+
+  static Stream<bool> get reauthenticationRequiredStream =>
+      _authEventChannel.receiveBroadcastStream().map((event) => event as bool);
+
   /// Tells the native side to pause (stop listening to events) or resume.
   static Future<void> setPaused(bool pause) async {
     await _methodChannel.invokeMethod('setPaused', {'pause': pause});
@@ -58,8 +65,20 @@ class AccessibilityManager {
     await _methodChannel.invokeMethod('clearAuthToken');
   }
 
+  static Future<String> notificationAvailability() async {
+    return await _methodChannel.invokeMethod<String>(
+          'notificationAvailability',
+        ) ??
+        'unavailable';
+  }
+
+  static Future<void> requestNotificationPermission() async {
+    await _methodChannel.invokeMethod('requestNotificationPermission');
+  }
+
   /// Sends a local test notification with "Hello notification" message.
   static Future<bool> testLocalNotification() async {
-    return await _methodChannel.invokeMethod<bool>('testLocalNotification') ?? false;
+    return await _methodChannel.invokeMethod<bool>('testLocalNotification') ??
+        false;
   }
 }

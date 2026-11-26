@@ -59,6 +59,7 @@ class UploadCoordinator internal constructor(
     private val queue: UploadEventQueue,
     private val apiClient: UploadCapturesClient,
     private val notificationManager: AppNotificationManager? = null,
+    private val onSuccessfulUpload: () -> Unit = {},
     private val pipelineLogger: (String) -> Unit = {},
 ) {
     constructor(
@@ -66,12 +67,14 @@ class UploadCoordinator internal constructor(
         queue: PersistentEventQueue,
         apiClient: CapturesApiClient = CapturesApiClient(),
         notificationManager: AppNotificationManager? = null,
+        onSuccessfulUpload: () -> Unit = {},
         pipelineLogger: (String) -> Unit = { message -> Log.i(PHASE5A_TAG, message) },
     ) : this(
         tokenStore = NativeTokenStoreAdapter(tokenStore),
         queue = PersistentEventQueueAdapter(queue),
         apiClient = CapturesApiClientAdapter(apiClient),
         notificationManager = notificationManager,
+        onSuccessfulUpload = onSuccessfulUpload,
         pipelineLogger = pipelineLogger,
     )
 
@@ -117,6 +120,13 @@ class UploadCoordinator internal constructor(
                         "skipped=${result.response.skipped}",
                 )
                 applyValidConfig(result.response.config.batchSize, result.response.config.flushSeconds)
+                try {
+                    onSuccessfulUpload()
+                } catch (error: kotlinx.coroutines.CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    pipelineLogger("Phase5A: notification trigger failed; capture upload remains successful")
+                }
                 handleServerAlert(result.response.alert)
                 acknowledgeAcceptedBatch(
                     token = acknowledgmentToken,
@@ -125,7 +135,7 @@ class UploadCoordinator internal constructor(
                 )
             }
             CapturesApiResult.Unauthorized -> {
-                tokenStore.revokeToken()
+                tokenStore.revokeToken(token)
                 pipelineLogger(
                     "Phase5A: upload unauthorized, token revoked, reauthentication required",
                 )
@@ -214,7 +224,7 @@ class UploadCoordinator internal constructor(
 
 internal interface UploadTokenStore {
     suspend fun getToken(): String?
-    suspend fun revokeToken()
+    suspend fun revokeToken(expectedToken: String)
 }
 
 internal interface UploadEventQueue {
@@ -231,7 +241,7 @@ private class NativeTokenStoreAdapter(
 ) : UploadTokenStore {
     override suspend fun getToken(): String? = delegate.getToken()
 
-    override suspend fun revokeToken() = delegate.clearToken()
+    override suspend fun revokeToken(expectedToken: String) { delegate.clearTokenIfMatches(expectedToken) }
 }
 
 private class PersistentEventQueueAdapter(

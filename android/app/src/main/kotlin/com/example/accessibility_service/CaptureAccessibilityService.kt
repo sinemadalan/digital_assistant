@@ -13,6 +13,10 @@ import androidx.annotation.RequiresApi
 import com.example.accessibility_service.Util.NodeWalker
 import com.example.accessibility_service.Util.BoundsInScreen
 import com.example.accessibility_service.Util.ScreenSummary
+import com.example.accessibility_service.notification.NotificationPollingController
+import com.example.accessibility_service.notification.NotificationStreamRunner
+import com.example.accessibility_service.notification.notificationPollingController
+import com.example.accessibility_service.notification.notificationStreamRunner
 import com.example.accessibility_service.networking.CapturesApiClient
 import com.example.accessibility_service.persistence.PersistentEventQueue
 import com.example.accessibility_service.upload.AccessibilityCaptureMapper
@@ -75,6 +79,9 @@ class CaptureAccessibilityService : AccessibilityService() {
 
     @Volatile
     private var screenshotUploadCoordinator: ScreenshotUploadCoordinator? = null
+    @Volatile
+    private var notificationPolling: NotificationPollingController? = null
+    private var notificationStream: NotificationStreamRunner? = null
     private val debounceJobs = ConcurrentHashMap<String, Job>()
     private val persistentInitializationGate by lazy {
         PipelineInitializationRetryGate(
@@ -107,6 +114,10 @@ class CaptureAccessibilityService : AccessibilityService() {
             activeService?.captureQueueBridge?.onAuthTokenAvailable()
         }
 
+        fun notifyNotificationPermissionAvailable() {
+            activeService?.notificationPolling?.requestPoll()
+        }
+
         private fun eventName(eventType: Int): String {
             return try {
                 AccessibilityEvent.eventTypeToString(eventType)
@@ -127,6 +138,14 @@ class CaptureAccessibilityService : AccessibilityService() {
         AccessibilityState.setRunning(true)
         activeService = this
         Log.i(TAG, "Capture accessibility service connected")
+        if (notificationPolling == null) {
+            notificationPolling = notificationPollingController(applicationContext, serviceScope)
+        }
+        notificationPolling?.start()
+        if (notificationStream == null) {
+            notificationStream = notificationPolling?.let { notificationStreamRunner(applicationContext, serviceScope, it) }
+        }
+        notificationStream?.start()
         if (persistentInitializationGate.tryStart()) {
             initializePersistentCapturePipeline()
         } else {
@@ -135,12 +154,16 @@ class CaptureAccessibilityService : AccessibilityService() {
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        notificationStream?.close()
+        notificationPolling?.stop()
         AccessibilityState.setRunning(false)
         if (activeService === this) activeService = null
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
+        notificationStream?.close()
+        notificationPolling?.close()
         // Catch-all for when the service is destroyed
         AccessibilityState.setRunning(false)
         if (activeService === this) activeService = null
@@ -470,7 +493,7 @@ class CaptureAccessibilityService : AccessibilityService() {
                     tokenStore = NativeTokenStore(applicationContext),
                     queue = openedQueue,
                     apiClient = CapturesApiClient(),
-                    notificationManager = com.example.accessibility_service.notification.AppNotificationManager.getInstance(applicationContext),
+                    onSuccessfulUpload = { notificationPolling?.requestPoll() },
                 )
                 bridge = CaptureQueueBridge(
                     scope = serviceScope,
